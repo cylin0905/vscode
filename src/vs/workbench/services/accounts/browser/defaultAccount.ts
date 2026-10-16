@@ -92,7 +92,27 @@ interface IMcpRegistryResponse {
 	readonly mcp_registries: ReadonlyArray<IMcpRegistryProvider>;
 }
 
-function toDefaultAccountConfig(defaultChatAgent: IDefaultChatAgent): IDefaultAccountConfig {
+// iShell: the default chat agent (Copilot) product configuration is optional.
+// When it is absent, the default account service stays inert: no provider is
+// registered and all account APIs resolve to empty/null results.
+const EMPTY_DEFAULT_ACCOUNT_CONFIG: IDefaultAccountConfig = {
+	preferredExtensions: [],
+	authenticationProvider: {
+		default: { id: '', name: '' },
+		enterprise: { id: '', name: '' },
+		enterpriseProviderConfig: '',
+		scopes: [],
+	},
+	tokenEntitlementUrl: '',
+	entitlementUrl: '',
+	mcpRegistryDataUrl: '',
+	managedSettingsUrl: '',
+};
+
+function toDefaultAccountConfig(defaultChatAgent: IDefaultChatAgent | undefined): IDefaultAccountConfig {
+	if (!defaultChatAgent) {
+		return EMPTY_DEFAULT_ACCOUNT_CONFIG;
+	}
 	return {
 		preferredExtensions: [
 			defaultChatAgent.chatExtensionId,
@@ -156,6 +176,12 @@ export class DefaultAccountService extends Disposable implements IDefaultAccount
 	) {
 		super();
 		this.defaultAccountConfig = toDefaultAccountConfig(productService.defaultChatAgent);
+		// iShell: without a default chat agent no provider is ever registered,
+		// so open the init barrier immediately to let account APIs resolve
+		// benignly instead of waiting forever.
+		if (!productService.defaultChatAgent) {
+			this.initBarrier.open();
+		}
 	}
 
 	async getDefaultAccount(): Promise<IDefaultAccount | null> {
@@ -1645,6 +1671,11 @@ class DefaultAccountProviderContribution extends Disposable implements IWorkbenc
 		@IDefaultAccountService defaultAccountService: IDefaultAccountService,
 	) {
 		super();
+		// iShell: without a default chat agent (Copilot) product configuration
+		// there is no default account provider to register.
+		if (!productService.defaultChatAgent) {
+			return;
+		}
 		const defaultAccountProvider = this._register(instantiationService.createInstance(DefaultAccountProvider, toDefaultAccountConfig(productService.defaultChatAgent)));
 		defaultAccountService.setDefaultAccountProvider(defaultAccountProvider);
 	}
