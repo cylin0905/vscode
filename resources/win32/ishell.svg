@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- iShell 应用图标设计源稿（窗口标题栏 / 任务栏 / 安装器）
+       产物：resources/win32/ishell.ico（16-256 多尺寸，小尺寸用加粗变体）
+             resources/win32/ishell_150x150.png（开发模式窗口图标，见 windows.ts）
+             resources/win32/ishell_70x70.png（开始屏幕磁贴）
+       再生成：SVG -> canvas 渲染各尺寸 PNG -> PNG 嵌入式 ICO 封装。
+       小尺寸（16/24/32）使用加粗笔画变体（stroke-width 36），保证像素级可读。 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3AA8FF"/>
+      <stop offset="1" stop-color="#1558C4"/>
+    </linearGradient>
+  </defs>
+  <!-- 标准版（>=48px） -->
+  <rect x="10" y="10" width="236" height="236" rx="54" fill="url(#bg)"/>
+  <path d="M70 84 L122 128 L70 172" fill="none" stroke="#FFFFFF" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M144 172 h42" fill="none" stroke="#FFFFFF" stroke-width="22" stroke-linecap="round"/>
+</svg>

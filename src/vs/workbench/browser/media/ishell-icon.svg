@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- iShell 标题栏应用图标（与 resources/win32/ishell.ico 16px 版一致：蓝色渐变圆角方块 + 白色 >_） -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3AA8FF"/>
+      <stop offset="1" stop-color="#1558C4"/>
+    </linearGradient>
+  </defs>
+  <rect x="0.5" y="0.5" width="15" height="15" rx="2.9" fill="url(#bg)"/>
+  <path d="M4 4.6 L8 8 L4 11.4" fill="none" stroke="#FFFFFF" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M9 11.4 h3" fill="none" stroke="#FFFFFF" stroke-width="2.25" stroke-linecap="round"/>
+</svg>

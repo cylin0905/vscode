@@ -3,11 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Codicon } from '../../../../base/common/codicons.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
@@ -15,9 +15,10 @@ import { IInstantiationService, ServicesAccessor } from '../../../../platform/in
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
-import { Registry } from '../../../../platform/registry/common/platform.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
 import Severity from '../../../../base/common/severity.js';
+import { Codicon } from '../../../../base/common/codicons.js';
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
 import { IViewContainersRegistry, IViewsRegistry, Extensions as ViewExtensions, ViewContainerLocation } from '../../../common/views.js';
@@ -31,16 +32,16 @@ import { ConnectionsView, IshellConnectionsContextMenu, IshellConnectionsTitleMe
 import { connectHost, deleteGroup, deleteHost, moveHostToGroup, pickAndDisconnect } from './connectionActions.js';
 import { showConnectionWizard, showQuickConnect } from './connectionWizard.js';
 import { SshTerminalEditor } from './sshTerminalEditor.js';
-import { SshTerminalEditorInput } from './sshTerminalEditorInput.js';
+import { SshTerminalEditorInput, DEFAULT_TERMINAL_FONT_SIZE, getTerminalFontSize, setTerminalFontSize } from './sshTerminalEditorInput.js';
 import { newTerminalCommand, openTerminalForProfile, IShellTerminalServices } from './terminalActions.js';
 
 // ==== 服务注册（渲染层代理 -> 主进程） ====
 
 registerSingleton(IIshellService, IshellService, InstantiationType.Delayed);
 
-// ==== 视图容器（活动栏"连接"） ====
-
 const ishellViewIcon = registerIcon('ishell-view-icon', Codicon.plug, localize('ishell.viewIcon', 'iShell 连接视图图标'));
+
+// ==== 视图容器（活动栏"连接"） ====
 
 const VIEW_CONTAINER_ID = 'workbench.view.ishell';
 
@@ -81,6 +82,18 @@ Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane
 );
 
 // ==== 配置 ====
+
+/** 内置终端字体列表（设置下拉 + 字体切换命令共用；未安装的字体自动回退到链上备选） */
+const TERMINAL_FONT_CHOICES: { label: string; value: string; description: string }[] = [
+	{ label: 'Consolas', value: 'Consolas, "Courier New", monospace', description: localize('ishell.font.consolas', 'Windows 经典等宽字体') },
+	{ label: 'Cascadia Mono', value: '"Cascadia Mono", Consolas, "Courier New", monospace', description: localize('ishell.font.cascadiaMono', 'Windows 11 默认终端字体') },
+	{ label: 'Cascadia Code', value: '"Cascadia Code", "Cascadia Mono", Consolas, monospace', description: localize('ishell.font.cascadiaCode', '支持连字（ligatures）') },
+	{ label: 'JetBrains Mono', value: '"JetBrains Mono", Consolas, "Courier New", monospace', description: localize('ishell.font.jetbrainsMono', 'JetBrains 系默认字体') },
+	{ label: 'Fira Code', value: '"Fira Code", Consolas, "Courier New", monospace', description: localize('ishell.font.firaCode', '支持连字') },
+	{ label: 'Source Code Pro', value: '"Source Code Pro", Consolas, "Courier New", monospace', description: localize('ishell.font.sourceCodePro', 'Adobe 等宽字体') },
+	{ label: 'Sarasa Mono SC', value: '"Sarasa Mono SC", Consolas, "Courier New", monospace', description: localize('ishell.font.sarasa', '中英双宽对齐等宽') },
+	{ label: 'Courier New', value: '"Courier New", monospace', description: localize('ishell.font.courier', '通用衬线等宽') },
+];
 
 const configurationRegistry = Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration);
 configurationRegistry.registerConfiguration({
@@ -138,8 +151,10 @@ configurationRegistry.registerConfiguration({
 		},
 		'ishell.terminal.fontFamily': {
 			type: 'string',
-			default: 'Consolas, "Courier New", monospace',
-			description: localize('ishell.cfg.fontFamily', '终端字体（等宽字体），多个字体用逗号分隔')
+			default: TERMINAL_FONT_CHOICES[0].value,
+			enum: TERMINAL_FONT_CHOICES.map(f => f.value),
+			enumDescriptions: TERMINAL_FONT_CHOICES.map(f => f.label),
+			description: localize('ishell.cfg.fontFamily', '终端字体（等宽字体），未安装的字体自动回退到备选字体')
 		},
 		'ishell.terminal.scrollback': {
 			type: 'number',
@@ -474,6 +489,81 @@ registerAction2(class NewTerminalForHostAction extends Action2 {
 		const host = view?.getFocusedHost();
 		if (host) {
 			await openTerminalForProfile(services, host.profile);
+		}
+	}
+});
+
+// ==== 终端外观（字号缩放 / 字体切换） ====
+
+registerAction2(class FontSizeIncreaseAction extends Action2 {
+	constructor() {
+		super({
+			id: 'ishell.terminal.fontSizeIncrease',
+			title: localize2('ishell.fontSizeIncrease', "终端：放大字号"),
+			category: localize2('ishell.category', "iShell"),
+			menu: [{ id: MenuId.CommandPalette, when: undefined }],
+		});
+	}
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const configurationService = accessor.get(IConfigurationService);
+		await setTerminalFontSize(configurationService, getTerminalFontSize(configurationService) + 1);
+	}
+});
+
+registerAction2(class FontSizeDecreaseAction extends Action2 {
+	constructor() {
+		super({
+			id: 'ishell.terminal.fontSizeDecrease',
+			title: localize2('ishell.fontSizeDecrease', "终端：缩小字号"),
+			category: localize2('ishell.category', "iShell"),
+			menu: [{ id: MenuId.CommandPalette, when: undefined }],
+		});
+	}
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const configurationService = accessor.get(IConfigurationService);
+		await setTerminalFontSize(configurationService, getTerminalFontSize(configurationService) - 1);
+	}
+});
+
+registerAction2(class FontSizeResetAction extends Action2 {
+	constructor() {
+		super({
+			id: 'ishell.terminal.fontSizeReset',
+			title: localize2('ishell.fontSizeReset', "终端：重置字号"),
+			category: localize2('ishell.category', "iShell"),
+			menu: [{ id: MenuId.CommandPalette, when: undefined }],
+		});
+	}
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const configurationService = accessor.get(IConfigurationService);
+		await setTerminalFontSize(configurationService, DEFAULT_TERMINAL_FONT_SIZE);
+	}
+});
+
+registerAction2(class SelectTerminalFontAction extends Action2 {
+	constructor() {
+		super({
+			id: 'ishell.terminal.selectFont',
+			title: localize2('ishell.selectTerminalFont', "终端：切换字体"),
+			category: localize2('ishell.category', "iShell"),
+			menu: [{ id: MenuId.CommandPalette, when: undefined }],
+		});
+	}
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const quickInput = accessor.get(IQuickInputService);
+		const configurationService = accessor.get(IConfigurationService);
+		const current = configurationService.getValue<string>('ishell.terminal.fontFamily');
+		const items = TERMINAL_FONT_CHOICES.map(f => ({ label: f.label, description: f.description, picked: f.value === current }));
+		const picked = await quickInput.pick(items, {
+			placeHolder: localize('ishell.pickFont', '选择终端字体（需本机已安装，未安装自动回退）'),
+			matchOnDescription: true,
+		});
+		if (!picked) {
+			return;
+		}
+		const choice = TERMINAL_FONT_CHOICES.find(f => f.label === picked.label);
+		if (choice && choice.value !== current) {
+			await configurationService.updateValue('ishell.terminal.fontFamily', choice.value);
 		}
 	}
 });

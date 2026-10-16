@@ -25,6 +25,23 @@ type OverlayState = 'none' | 'waiting' | 'failed' | 'ended';
 
 const TERMINAL_SCROLLBAR_WIDTH = 14;
 
+export const DEFAULT_TERMINAL_FONT_SIZE = 12;
+const MIN_TERMINAL_FONT_SIZE = 6;
+const MAX_TERMINAL_FONT_SIZE = 64;
+const DEFAULT_TERMINAL_FONT_FAMILY = 'Consolas, "Courier New", monospace';
+
+/** 读取并钳制终端字号设置（6–64） */
+export function getTerminalFontSize(configurationService: IConfigurationService): number {
+	const size = configurationService.getValue<number>('ishell.terminal.fontSize');
+	return Math.max(MIN_TERMINAL_FONT_SIZE, Math.min(MAX_TERMINAL_FONT_SIZE, Math.floor(size) || DEFAULT_TERMINAL_FONT_SIZE));
+}
+
+/** 写入终端字号设置（全局生效并持久化，所有已打开终端实时应用） */
+export async function setTerminalFontSize(configurationService: IConfigurationService, size: number): Promise<void> {
+	const clamped = Math.max(MIN_TERMINAL_FONT_SIZE, Math.min(MAX_TERMINAL_FONT_SIZE, Math.floor(size) || DEFAULT_TERMINAL_FONT_SIZE));
+	await configurationService.updateValue('ishell.terminal.fontSize', clamped);
+}
+
 /** 从 workbench 主题构建 xterm 主题（未定制终端色时回退编辑器色） */
 function buildXtermTheme(theme: IColorTheme): IXtermTheme {
 	const color = (id: string, fallback?: string): string | undefined => theme.getColor(id)?.toString() ?? fallback;
@@ -158,14 +175,14 @@ export class SshTerminalEditorInput extends EditorInput implements IEditorCloseH
 				if (this._store.isDisposed || !this._wrapper) {
 					return;
 				}
-				const fontSize = this._configurationService.getValue<number>('ishell.terminal.fontSize');
-				const fontFamily = this._configurationService.getValue<string>('ishell.terminal.fontFamily');
+				const fontSize = getTerminalFontSize(this._configurationService);
+				const fontFamily = this._configurationService.getValue<string>('ishell.terminal.fontFamily') || DEFAULT_TERMINAL_FONT_FAMILY;
 				const scrollback = this._configurationService.getValue<number>('ishell.terminal.scrollback');
 				this._xterm = new TerminalCtor({
 					cols: 80,
 					rows: 24,
-					fontSize: Math.max(6, Math.min(64, fontSize || 12)),
-					fontFamily: fontFamily || 'Consolas, "Courier New", monospace',
+					fontSize,
+					fontFamily,
 					scrollback: Math.max(0, scrollback ?? 1000),
 					cursorBlink: true,
 					theme: buildXtermTheme(this._themeService.getColorTheme()),
@@ -192,7 +209,7 @@ export class SshTerminalEditorInput extends EditorInput implements IEditorCloseH
 					}
 				}));
 
-				// Ctrl+Shift+C/V 复制粘贴（不阻塞其余按键，含 IME）
+				// Ctrl+Shift+C/V 复制粘贴；Ctrl+= / Ctrl+- / Ctrl+0 字号缩放（不阻塞其余按键，含 IME）
 				xterm.attachCustomKeyEventHandler(event => {
 					if (event.type !== 'keydown') {
 						return true;
@@ -204,6 +221,23 @@ export class SshTerminalEditorInput extends EditorInput implements IEditorCloseH
 					if (event.ctrlKey && event.shiftKey && !event.altKey && event.code === 'KeyV') {
 						void this.paste();
 						return false;
+					}
+					if (event.ctrlKey && !event.altKey && !event.metaKey) {
+						let zoom: number | undefined;
+						if (event.code === 'Equal' || event.code === 'NumpadAdd') {
+							zoom = 1; // Ctrl+= / Ctrl+(Shift)+= 物理加号键
+						} else if (event.code === 'Minus' || event.code === 'NumpadSubtract') {
+							zoom = -1;
+						} else if (event.code === 'Digit0' || event.code === 'Numpad0') {
+							zoom = 0; // 重置
+						}
+						if (zoom !== undefined) {
+							// 同步拦截：避免继续触发 xterm 输入与全局键绑定（窗口缩放）
+							event.preventDefault();
+							event.stopPropagation();
+							this.zoomFont(zoom);
+							return false;
+						}
 					}
 					return true;
 				});
@@ -246,8 +280,54 @@ export class SshTerminalEditorInput extends EditorInput implements IEditorCloseH
 					}
 				}));
 
+				// Ctrl+滚轮：字号缩放（捕获阶段拦截，避免触发 xterm 滚动与浏览器页面缩放）
+				let wheelDelta = 0;
+				this._sessionDisposables.add(dom.addDisposableListener(this._wrapper, 'wheel', (event: WheelEvent) => {
+					if (!event.ctrlKey) {
+						wheelDelta = 0;
+						return;
+					}
+					event.preventDefault();
+					event.stopImmediatePropagation();
+					if (event.deltaMode === WheelEvent.DOM_DELTA_LINE || event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+						wheelDelta = 0;
+						this.zoomFont(event.deltaY < 0 ? 1 : -1);
+						return;
+					}
+					// 像素模式（触控板捏合会产生大量小幅事件）：累积阈值触发，避免过灵敏
+					wheelDelta += event.deltaY;
+					if (wheelDelta <= -60) {
+						wheelDelta = 0;
+						this.zoomFont(1);
+					} else if (wheelDelta >= 60) {
+						wheelDelta = 0;
+						this.zoomFont(-1);
+					}
+				}, true));
+
 				this._register(this._themeService.onDidColorThemeChange(theme => {
 					xterm.options.theme = buildXtermTheme(theme);
+				}));
+
+				// 设置变更实时应用：字号 / 字体 / 回滚行数（对所有已打开终端生效）
+				this._register(this._configurationService.onDidChangeConfiguration(e => {
+					const current = this._xterm;
+					if (!current) {
+						return;
+					}
+					if (e.affectsConfiguration('ishell.terminal.fontSize')) {
+						current.options.fontSize = getTerminalFontSize(this._configurationService);
+						this.fit();
+						setTimeout(() => this.fit(), 50); // 字体度量更新存在异步，二次适配
+					}
+					if (e.affectsConfiguration('ishell.terminal.fontFamily')) {
+						current.options.fontFamily = this._configurationService.getValue<string>('ishell.terminal.fontFamily') || DEFAULT_TERMINAL_FONT_FAMILY;
+						this.fit();
+						setTimeout(() => this.fit(), 50);
+					}
+					if (e.affectsConfiguration('ishell.terminal.scrollback')) {
+						current.options.scrollback = Math.max(0, this._configurationService.getValue<number>('ishell.terminal.scrollback') ?? 1000);
+					}
 				}));
 
 				this.fit();
@@ -292,6 +372,12 @@ export class SshTerminalEditorInput extends EditorInput implements IEditorCloseH
 		if (cols !== xterm.cols || rows !== xterm.rows) {
 			xterm.resize(cols, rows);
 		}
+	}
+
+	/** 调整终端字号设置（delta=0 重置为默认）；配置监听会将新字号实时应用到所有已打开终端 */
+	private zoomFont(delta: number): void {
+		const next = delta === 0 ? DEFAULT_TERMINAL_FONT_SIZE : getTerminalFontSize(this._configurationService) + delta;
+		void setTerminalFontSize(this._configurationService, next);
 	}
 
 	// ==== 主进程事件 ====

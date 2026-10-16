@@ -16,13 +16,16 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { ITreeContextMenuEvent } from '../../../../base/browser/ui/tree/tree.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
+import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { ViewPane } from '../../../browser/parts/views/viewPane.js';
 import { IViewletViewOptions } from '../../../browser/parts/views/viewsViewlet.js';
 import { IViewDescriptorService } from '../../../common/views.js';
+import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { MenuId } from '../../../../platform/actions/common/actions.js';
 import { IIshellService } from '../common/ishell.js';
 import { ConnectionTreeElement, ConnectionsAccessibilityProvider, ConnectionsDataSource, ConnectionsDelegate, ConnectionsIdentityProvider, ConnectionsNaviLabelProvider, GroupElement, GroupRenderer, HostElement, HostRenderer, IConnectionsTreeInput, isHostElement, UNGROUPED_ID } from './connectionTree.js';
-import { connectHost } from './connectionActions.js';
+import { openTerminalForProfile, IShellTerminalServices } from './terminalActions.js';
 import './ishell.css';
 
 /** 视图标题栏工具栏菜单 */
@@ -127,11 +130,26 @@ export class ConnectionsView extends ViewPane {
 		});
 	}
 
-	private async onOpen(e: IOpenEvent<ConnectionTreeElement | undefined>): Promise<void> {
+	private onOpen(e: IOpenEvent<ConnectionTreeElement | undefined>): void {
 		const element = e.element;
-		if (element && isHostElement(element)) {
-			await connectHost(this.instantiationService, element.profile);
+		if (!element || !isHostElement(element)) {
+			return;
 		}
+		// XShell 风格：单击仅选中；双击（或回车）直接打开终端（未连接则先自动连接）
+		if (e.browserEvent instanceof MouseEvent && e.browserEvent.detail < 2) {
+			return;
+		}
+		this.instantiationService.invokeFunction(accessor => {
+			// ServicesAccessor 仅同步段有效：立即捕获服务对象后跨异步边界传递
+			const services: IShellTerminalServices = {
+				ishellService: accessor.get(IIshellService),
+				quickInput: accessor.get(IQuickInputService),
+				notificationService: accessor.get(INotificationService),
+				editorService: accessor.get(IEditorService),
+				instantiationService: this.instantiationService,
+			};
+			void openTerminalForProfile(services, element.profile);
+		});
 	}
 
 	private updateContextKeys(): void {
