@@ -12,10 +12,24 @@ import { HostKeyVerificationResult } from './knownHostsStore.js';
 
 // ==== 可注入的 ssh2 客户端抽象（便于单测 mock） ====
 
+/** ssh2 ClientChannel（shell 通道）的最小抽象 */
+export interface ISshChannelLike {
+	write(data: string | Buffer): boolean;
+	/** PTY 窗口尺寸变化（cols/rows + 像素高宽，像素可传 0） */
+	setWindow(rows: number, cols: number, height: number, width: number): void;
+	close(): void;
+	destroy(): void;
+	on(event: 'data', listener: (data: Buffer) => void): ISshChannelLike;
+	on(event: 'close', listener: () => void): ISshChannelLike;
+	on(event: 'error', listener: (err: Error) => void): ISshChannelLike;
+}
+
 export interface ISshClientLike {
 	connect(config: object): ISshClientLike;
 	end(): ISshClientLike;
 	destroy(): void;
+	/** 打开交互 shell 通道（请求 PTY），流经 callback 返回 */
+	shell(window: { term: string; cols: number; rows: number }, callback: (err: Error | undefined, stream: ISshChannelLike) => void): ISshClientLike;
 	on(event: 'ready', listener: () => void): ISshClientLike;
 	on(event: 'error', listener: (err: Error & { level?: string }) => void): ISshClientLike;
 	on(event: 'close', listener: () => void): ISshClientLike;
@@ -175,6 +189,31 @@ export class SshSession {
 		this.state = InternalState.UserClosed;
 		this.destroyClient();
 		this.fireSnapshot();
+	}
+
+	/**
+	 * 在已连接会话上打开交互 shell 通道（请求 PTY，xterm-256color）。
+	 * 单连接多通道复用：可同时打开多个互不干扰的通道。
+	 * 通道生命周期不随会话重连延续：断线后通道即死，由上层（SshTerminalManager）负责重开。
+	 */
+	openShell(cols: number, rows: number): Promise<ISshChannelLike> {
+		if (this.state !== InternalState.Connected || !this.client) {
+			return Promise.reject(new Error('会话未连接，无法打开终端通道'));
+		}
+		const client = this.client;
+		return new Promise((resolve, reject) => {
+			try {
+				client.shell({ term: 'xterm-256color', cols, rows }, (err, stream) => {
+					if (err) {
+						reject(err);
+					} else {
+						resolve(stream);
+					}
+				});
+			} catch (err) {
+				reject(err as Error);
+			}
+		});
 	}
 
 	dispose(): void {

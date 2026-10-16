@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as assert from 'assert';
-import { ISshClientLike, ISshSessionCallbacks, ISshSessionOptions, ISshTarget, SshSession } from '../../node/sshSession.js';
+import { ISshChannelLike, ISshClientLike, ISshSessionCallbacks, ISshSessionOptions, ISshTarget, SshSession } from '../../node/sshSession.js';
 import { IReconnectPolicy } from '../../node/backoff.js';
 import { HostKeyVerificationResult } from '../../node/knownHostsStore.js';
 
@@ -12,10 +12,36 @@ import { HostKeyVerificationResult } from '../../node/knownHostsStore.js';
 
 type Listener = (...args: any[]) => void;
 
+class FakeShellChannel implements ISshChannelLike {
+	public readonly writes: string[] = [];
+	public readonly windows: { rows: number; cols: number }[] = [];
+	public closed = false;
+	public destroyed = false;
+	private listeners = new Map<string, Listener[]>();
+
+	write(data: string): boolean { this.writes.push(data); return true; }
+	setWindow(rows: number, cols: number): void { this.windows.push({ rows, cols }); }
+	close(): void { this.closed = true; }
+	destroy(): void { this.destroyed = true; }
+	on(event: string, listener: Listener): ISshChannelLike {
+		const arr = this.listeners.get(event) ?? [];
+		arr.push(listener);
+		this.listeners.set(event, arr);
+		return this;
+	}
+	emit(event: string, ...args: any[]): void {
+		for (const listener of [...(this.listeners.get(event) ?? [])]) {
+			listener(...args);
+		}
+	}
+}
+
 class FakeClient implements ISshClientLike {
 	public connectConfig: any;
 	public destroyed = false;
 	public ended = false;
+	public shellWindows: { term: string; cols: number; rows: number }[] = [];
+	public channels: FakeShellChannel[] = [];
 	private listeners = new Map<string, Listener[]>();
 
 	connect(config: object): ISshClientLike {
@@ -24,6 +50,13 @@ class FakeClient implements ISshClientLike {
 	}
 	end(): ISshClientLike { this.ended = true; return this; }
 	destroy(): void { this.destroyed = true; }
+	shell(window: { term: string; cols: number; rows: number }, callback: (err: Error | undefined, stream: ISshChannelLike) => void): ISshClientLike {
+		this.shellWindows.push(window);
+		const channel = new FakeShellChannel();
+		this.channels.push(channel);
+		callback(undefined, channel);
+		return this;
+	}
 	on(event: string, listener: Listener): ISshClientLike {
 		const arr = this.listeners.get(event) ?? [];
 		arr.push(listener);
@@ -296,5 +329,27 @@ suite('ishell > SshSession', () => {
 		let answers: string[] | undefined;
 		h.clients[0].emit('keyboard-interactive', 'Password', '', 'en', [{ prompt: 'Password: ', echo: false }], (a: string[]) => { answers = a; });
 		assert.deepStrictEqual(answers, ['hunter2']);
+	});
+
+	test('openShell：未连接时抛错', async () => {
+		const h = createHarness();
+		await assert.rejects(() => h.session.openShell(80, 24), /未连接/);
+		await h.session.connect();
+		h.clients[0].emit('close'); // 首连失败 → failed 终态
+		await assert.rejects(() => h.session.openShell(80, 24), /未连接/);
+	});
+
+	test('openShell：已连接时返回通道并携带 PTY 参数', async () => {
+		const h = createHarness();
+		await h.session.connect();
+		h.clients[0].emit('ready');
+		const channel = await h.session.openShell(120, 40);
+		assert.ok(channel instanceof FakeShellChannel);
+		assert.strictEqual(h.clients[0].shellWindows.length, 1);
+		assert.deepStrictEqual(h.clients[0].shellWindows[0], { term: 'xterm-256color', cols: 120, rows: 40 });
+		// 多通道复用：可再开第二个
+		const channel2 = await h.session.openShell(80, 24);
+		assert.strictEqual(h.clients[0].channels.length, 2);
+		assert.notStrictEqual(channel, channel2);
 	});
 });

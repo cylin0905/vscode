@@ -13,11 +13,12 @@ import { IEncryptionMainService } from '../../../../platform/encryption/common/e
 import { IEnvironmentMainService } from '../../../../platform/environment/electron-main/environmentMainService.js';
 import { ILifecycleMainService } from '../../../../platform/lifecycle/electron-main/lifecycleMainService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
-import { IConnectionsData, IHostGroup, IHostKeyPrompt, IHostProfile, IIshellService, IQuickConnectTarget, ISshConnectionSnapshot } from '../common/ishell.js';
+import { IConnectionsData, IHostGroup, IHostKeyPrompt, IHostProfile, IIshellService, IQuickConnectTarget, ISshConnectionSnapshot, ITerminalCloseEvent, ITerminalOpenOptions, ITerminalOutputEvent } from '../common/ishell.js';
 import { ConnectionStore, EMPTY_CONNECTIONS_DATA, IFileIO } from '../node/connectionStore.js';
 import { KnownHostsStore } from '../node/knownHostsStore.js';
 import { SshConnectionPool } from '../node/sshConnectionPool.js';
 import type { ISshClientLike } from '../node/sshSession.js';
+import { SshTerminalManager } from '../node/sshTerminalManager.js';
 
 class NodeFileIO implements IFileIO {
 
@@ -54,6 +55,7 @@ export class IshellMainService extends Disposable implements IIshellService {
 	private readonly store: ConnectionStore;
 	private readonly knownHosts: KnownHostsStore;
 	private readonly pool: SshConnectionPool;
+	private readonly terminalManager: SshTerminalManager;
 	private profilesCache: IConnectionsData = EMPTY_CONNECTIONS_DATA;
 	private loaded: Promise<void>;
 
@@ -65,6 +67,12 @@ export class IshellMainService extends Disposable implements IIshellService {
 
 	private readonly _onDidRequestHostKeyConfirm = new Emitter<IHostKeyPrompt>();
 	readonly onDidRequestHostKeyConfirm: Event<IHostKeyPrompt> = this._onDidRequestHostKeyConfirm.event;
+
+	private readonly _onDidTerminalOutput = new Emitter<ITerminalOutputEvent>();
+	readonly onDidTerminalOutput: Event<ITerminalOutputEvent> = this._onDidTerminalOutput.event;
+
+	private readonly _onDidTerminalClose = new Emitter<ITerminalCloseEvent>();
+	readonly onDidTerminalClose: Event<ITerminalCloseEvent> = this._onDidTerminalClose.event;
 
 	constructor(
 		@IEnvironmentMainService environmentMainService: IEnvironmentMainService,
@@ -104,6 +112,10 @@ export class IshellMainService extends Disposable implements IIshellService {
 
 		this._register(this.pool.onDidChange(e => this._onDidChangeConnections.fire(e)));
 		this._register(this.pool.onDidRequestHostKeyConfirm(e => this._onDidRequestHostKeyConfirm.fire(e)));
+
+		this.terminalManager = this._register(new SshTerminalManager(this.pool));
+		this._register(this.terminalManager.onDidOutput(e => this._onDidTerminalOutput.fire(e)));
+		this._register(this.terminalManager.onDidClose(e => this._onDidTerminalClose.fire(e)));
 
 		this._register(lifecycleMainService.onWillShutdown(() => this.pool.dispose()));
 
@@ -222,5 +234,23 @@ export class IshellMainService extends Disposable implements IIshellService {
 
 	async confirmHostKey(sessionId: string, accepted: boolean): Promise<void> {
 		this.pool.resolveHostKeyConfirmation(sessionId, accepted);
+	}
+
+	// ==== 远程终端 ====
+
+	async openTerminal(sessionId: string, options: ITerminalOpenOptions): Promise<string> {
+		return this.terminalManager.open(sessionId, options.cols, options.rows);
+	}
+
+	async writeTerminal(terminalId: string, data: string): Promise<void> {
+		this.terminalManager.write(terminalId, data);
+	}
+
+	async resizeTerminal(terminalId: string, cols: number, rows: number): Promise<void> {
+		this.terminalManager.resize(terminalId, cols, rows);
+	}
+
+	async closeTerminal(terminalId: string): Promise<void> {
+		this.terminalManager.close(terminalId);
 	}
 }

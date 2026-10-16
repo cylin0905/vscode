@@ -153,7 +153,8 @@ export async function showConnectionWizard(services: IWizardServices, existing?:
 	}) as (IQuickPickItem & { groupId: string | undefined }) | undefined;
 	if (!groupPick) { return; }
 
-	// 5. 保存（encSecret 表达"是否保留旧密文"意图；newSecret 为新明文）
+	// 5. 保存（encSecret 表达"是否保留旧密文"意图；仅当需要持久化时才传新明文，
+	// 否则 store 会把"不保存"的密码也加密落盘）
 	const profile: IHostProfile = {
 		id: existing?.id ?? generateUuid(),
 		name: name.trim().length === 0 ? host.trim() : name.trim(),
@@ -169,7 +170,7 @@ export async function showConnectionWizard(services: IWizardServices, existing?:
 	};
 
 	try {
-		await ishellService.saveProfile(profile, newSecret);
+		await ishellService.saveProfile(profile, keepEncrypted ? newSecret : undefined);
 	} catch (err) {
 		notificationService.error(localize('ishell.wiz.saveError', '保存失败：{0}', (err as Error).message));
 		return;

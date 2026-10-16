@@ -22,11 +22,17 @@ import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContaine
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
 import { IViewContainersRegistry, IViewsRegistry, Extensions as ViewExtensions, ViewContainerLocation } from '../../../common/views.js';
 import { IViewsService } from '../../../services/views/common/viewsService.js';
+import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
+import { EditorExtensions } from '../../../common/editor.js';
 import { IIshellService } from '../common/ishell.js';
 import { IshellService } from '../electron-sandbox/ishellService.js';
 import { ConnectionsView, IshellConnectionsContextMenu, IshellConnectionsTitleMenu } from './connectionsView.js';
 import { connectHost, deleteGroup, deleteHost, moveHostToGroup, pickAndDisconnect } from './connectionActions.js';
 import { showConnectionWizard, showQuickConnect } from './connectionWizard.js';
+import { SshTerminalEditor } from './sshTerminalEditor.js';
+import { SshTerminalEditorInput } from './sshTerminalEditorInput.js';
+import { newTerminalCommand, openTerminalForProfile, IShellTerminalServices } from './terminalActions.js';
 
 // ==== 服务注册（渲染层代理 -> 主进程） ====
 
@@ -62,6 +68,17 @@ Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([{
 		order: 1,
 	},
 }], container);
+
+// ==== 远程终端编辑器（M3：终端即编辑器标签） ====
+
+Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
+	EditorPaneDescriptor.create(
+		SshTerminalEditor,
+		SshTerminalEditorInput.EDITOR_ID,
+		localize('ishell.terminalEditorName', 'iShell 终端')
+	),
+	[new SyncDescriptor(SshTerminalEditorInput)]
+);
 
 // ==== 配置 ====
 
@@ -108,6 +125,42 @@ configurationRegistry.registerConfiguration({
 	}
 });
 
+configurationRegistry.registerConfiguration({
+	id: 'ishell.terminal',
+	title: localize('ishell.terminalConfigTitle', 'iShell 终端'),
+	properties: {
+		'ishell.terminal.fontSize': {
+			type: 'number',
+			default: 12,
+			minimum: 6,
+			maximum: 64,
+			description: localize('ishell.cfg.fontSize', '终端字号（像素）')
+		},
+		'ishell.terminal.fontFamily': {
+			type: 'string',
+			default: 'Consolas, "Courier New", monospace',
+			description: localize('ishell.cfg.fontFamily', '终端字体（等宽字体），多个字体用逗号分隔')
+		},
+		'ishell.terminal.scrollback': {
+			type: 'number',
+			default: 1000,
+			minimum: 0,
+			description: localize('ishell.cfg.scrollback', '终端回滚缓冲行数')
+		},
+		'ishell.terminal.rightClickAction': {
+			type: 'string',
+			enum: ['copyPaste', 'menu', 'default'],
+			default: 'copyPaste',
+			enumDescriptions: [
+				localize('ishell.cfg.rightClick.copyPaste', '有选区时复制，无选区时粘贴'),
+				localize('ishell.cfg.rightClick.menu', '显示右键菜单'),
+				localize('ishell.cfg.rightClick.default', '浏览器默认行为'),
+			],
+			description: localize('ishell.cfg.rightClick', '终端右键行为（Shift+右键始终为系统菜单）')
+		},
+	}
+});
+
 // ==== 命令辅助 ====
 
 async function getConnectionView(viewsService: IViewsService): Promise<ConnectionsView | undefined> {
@@ -120,6 +173,17 @@ function wizardServices(accessor: ServicesAccessor) {
 		ishellService: accessor.get(IIshellService),
 		quickInput: accessor.get(IQuickInputService),
 		notificationService: accessor.get(INotificationService),
+	};
+}
+
+/** 终端命令所需服务（必须在命令 run() 同步段捕获，ServicesAccessor 不能跨 await） */
+function terminalServices(accessor: ServicesAccessor): IShellTerminalServices {
+	return {
+		ishellService: accessor.get(IIshellService),
+		quickInput: accessor.get(IQuickInputService),
+		notificationService: accessor.get(INotificationService),
+		editorService: accessor.get(IEditorService),
+		instantiationService: accessor.get(IInstantiationService),
 	};
 }
 
@@ -200,10 +264,12 @@ registerAction2(class ConnectAction extends Action2 {
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
-		const view = await getConnectionView(accessor.get(IViewsService));
+		const viewsService = accessor.get(IViewsService);
+		const instantiationService = accessor.get(IInstantiationService);
+		const view = await getConnectionView(viewsService);
 		const host = view?.getFocusedHost();
 		if (host) {
-			await connectHost(accessor.get(IInstantiationService), host.profile);
+			await connectHost(instantiationService, host.profile);
 		}
 	}
 });
@@ -223,10 +289,12 @@ registerAction2(class DisconnectAction extends Action2 {
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
-		const view = await getConnectionView(accessor.get(IViewsService));
+		const viewsService = accessor.get(IViewsService);
+		const ishellService = accessor.get(IIshellService);
+		const view = await getConnectionView(viewsService);
 		const host = view?.getFocusedHost();
 		if (host) {
-			await accessor.get(IIshellService).disconnect(host.profile.id);
+			await ishellService.disconnect(host.profile.id);
 		}
 	}
 });
@@ -244,10 +312,12 @@ registerAction2(class EditConnectionAction extends Action2 {
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
-		const view = await getConnectionView(accessor.get(IViewsService));
+		const viewsService = accessor.get(IViewsService);
+		const services = wizardServices(accessor);
+		const view = await getConnectionView(viewsService);
 		const host = view?.getFocusedHost();
 		if (host) {
-			await showConnectionWizard(wizardServices(accessor), host.profile);
+			await showConnectionWizard(services, host.profile);
 		}
 	}
 });
@@ -265,10 +335,12 @@ registerAction2(class MoveToGroupAction extends Action2 {
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
-		const view = await getConnectionView(accessor.get(IViewsService));
+		const viewsService = accessor.get(IViewsService);
+		const instantiationService = accessor.get(IInstantiationService);
+		const view = await getConnectionView(viewsService);
 		const host = view?.getFocusedHost();
 		if (host) {
-			await moveHostToGroup(accessor.get(IInstantiationService), host.profile);
+			await moveHostToGroup(instantiationService, host.profile);
 		}
 	}
 });
@@ -286,10 +358,12 @@ registerAction2(class DeleteConnectionAction extends Action2 {
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
-		const view = await getConnectionView(accessor.get(IViewsService));
+		const viewsService = accessor.get(IViewsService);
+		const instantiationService = accessor.get(IInstantiationService);
+		const view = await getConnectionView(viewsService);
 		const host = view?.getFocusedHost();
 		if (host) {
-			await deleteHost(accessor.get(IInstantiationService), host.profile);
+			await deleteHost(instantiationService, host.profile);
 		}
 	}
 });
@@ -308,10 +382,11 @@ registerAction2(class RenameGroupAction extends Action2 {
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
-		const view = await getConnectionView(accessor.get(IViewsService));
+		const viewsService = accessor.get(IViewsService);
+		const { ishellService, quickInput } = wizardServices(accessor);
+		const view = await getConnectionView(viewsService);
 		const group = view?.getFocusedGroup();
 		if (group && group.group.id !== '__ungrouped__') {
-			const { ishellService, quickInput } = wizardServices(accessor);
 			const name = await quickInput.input({
 				placeHolder: localize('ishell.groupName', '分组名称'),
 				value: group.group.name,
@@ -337,10 +412,12 @@ registerAction2(class DeleteGroupAction extends Action2 {
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
-		const view = await getConnectionView(accessor.get(IViewsService));
+		const viewsService = accessor.get(IViewsService);
+		const instantiationService = accessor.get(IInstantiationService);
+		const view = await getConnectionView(viewsService);
 		const group = view?.getFocusedGroup();
 		if (group) {
-			await deleteGroup(accessor.get(IInstantiationService), group.group);
+			await deleteGroup(instantiationService, group.group);
 		}
 	}
 });
@@ -359,6 +436,48 @@ registerAction2(class DisconnectSessionAction extends Action2 {
 	}
 });
 
+// ==== 远程终端命令（M3） ====
+
+registerAction2(class NewTerminalAction extends Action2 {
+	constructor() {
+		super({
+			id: 'ishell.terminal.new',
+			title: localize2('ishell.newTerminal', "新建终端"),
+			category: localize2('ishell.category', "iShell"),
+			icon: Codicon.terminal,
+			menu: [{ id: MenuId.CommandPalette, when: undefined }],
+		});
+	}
+	async run(accessor: ServicesAccessor): Promise<void> {
+		await newTerminalCommand(terminalServices(accessor));
+	}
+});
+
+registerAction2(class NewTerminalForHostAction extends Action2 {
+	constructor() {
+		super({
+			id: 'ishell.terminal.newForHost',
+			title: localize2('ishell.newTerminalForHost', "新建终端"),
+			category: localize2('ishell.category', "iShell"),
+			icon: Codicon.terminal,
+			precondition: ConnectionsView.ctxHostFocused,
+			menu: [
+				{ id: IshellConnectionsContextMenu, group: 'terminal', order: 1, when: ConnectionsView.ctxHostFocused },
+				{ id: MenuId.CommandPalette, when: ConnectionsView.ctxHostFocused },
+			],
+		});
+	}
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const viewsService = accessor.get(IViewsService);
+		const services = terminalServices(accessor);
+		const view = await getConnectionView(viewsService);
+		const host = view?.getFocusedHost();
+		if (host) {
+			await openTerminalForProfile(services, host.profile);
+		}
+	}
+});
+
 // ==== 主机指纹确认（TOFU） ====
 
 class IshellHostKeyHandler extends Disposable {
@@ -372,6 +491,11 @@ class IshellHostKeyHandler extends Disposable {
 	) {
 		super();
 		this._register(ishellService.onDidRequestHostKeyConfirm(async prompt => {
+			if (!prompt) {
+				// 防御：IPC 事件负载为空时忽略，避免空引用崩溃
+				console.warn('[ishell] hostkey confirm prompt is undefined');
+				return;
+			}
 			const { confirmed } = await dialogService.confirm({
 				type: Severity.Warning,
 				message: localize('ishell.hostkeyTitle', '无法确认主机 {0}:{1} 的真实性', prompt.host, prompt.port),

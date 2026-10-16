@@ -64,7 +64,6 @@ export async function deleteHost(instantiationService: IInstantiationService, pr
 	await instantiationService.invokeFunction(async accessor => {
 		const ishellService = accessor.get(IIshellService);
 		const dialogService = accessor.get(IDialogService);
-
 		const { confirmed } = await dialogService.confirm({
 			type: Severity.Warning,
 			message: localize('ishell.deleteHost', '删除连接 "{0}"？', profile.name || profile.host),

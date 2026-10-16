@@ -66,3 +66,49 @@
 	color: var(--vscode-descriptionForeground);
 	user-select: none;
 }
+
+/* ==== 远程终端（M3） ==== */
+
+.ishell-terminal-editor {
+	position: relative;
+	height: 100%;
+}
+
+.ishell-terminal-wrapper {
+	position: absolute;
+	inset: 0;
+	padding: 4px 0 4px 8px;
+}
+
+.ishell-terminal-wrapper .xterm {
+	height: 100%;
+}
+
+.ishell-terminal-wrapper .xterm-viewport {
+	background-color: transparent !important;
+}
+
+.ishell-terminal-overlay {
+	position: absolute;
+	inset: 0;
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 16px;
+	text-align: center;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-descriptionForeground);
+	font-size: 13px;
+	white-space: pre-line;
+	user-select: none;
+}
+
+.ishell-terminal-overlay.hidden {
+	display: none;
+}
+
+.ishell-terminal-overlay.failed {
+	background: color-mix(in srgb, var(--vscode-editorError-foreground, #f66) 8%, var(--vscode-editor-background));
+	color: var(--vscode-errorForeground, var(--vscode-editorError-foreground));
+}

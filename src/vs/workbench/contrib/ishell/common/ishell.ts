@@ -79,6 +79,26 @@ export interface IHostKeyPrompt {
 	fingerprint: string;
 }
 
+// ==== 远程终端（M3） ====
+
+export type TerminalCloseReason = 'session-closed' | 'channel-closed' | 'user-closed';
+
+export interface ITerminalOpenOptions {
+	cols: number;
+	rows: number;
+}
+
+export interface ITerminalOutputEvent {
+	terminalId: string;
+	/** shell 输出（主进程批量合并后推送，UTF-8 安全切分） */
+	data: string;
+}
+
+export interface ITerminalCloseEvent {
+	terminalId: string;
+	reason: TerminalCloseReason;
+}
+
 // ==== 快速连接（不落盘） ====
 
 export interface IQuickConnectTarget {
@@ -124,6 +144,17 @@ export interface IIshellService {
 	/** 用户对主机指纹确认框的选择 */
 	confirmHostKey(sessionId: string, accepted: boolean): Promise<void>;
 
+	// ---- 远程终端 ----
+
+	/** 在已连接的会话上打开交互 shell 通道，返回 terminalId（单连接多通道复用） */
+	openTerminal(sessionId: string, options: ITerminalOpenOptions): Promise<string>;
+	/** 渲染层输入（按键/粘贴）写入 shell 通道 */
+	writeTerminal(terminalId: string, data: string): Promise<void>;
+	/** 终端尺寸变化（cols/rows） */
+	resizeTerminal(terminalId: string, cols: number, rows: number): Promise<void>;
+	/** 关闭终端通道（用户关闭标签） */
+	closeTerminal(terminalId: string): Promise<void>;
+
 	// ---- 事件 ----
 
 	readonly onDidChangeProfiles: Event<void>;
@@ -131,4 +162,8 @@ export interface IIshellService {
 	readonly onDidChangeConnections: Event<ISshConnectionSnapshot | undefined>;
 	/** 主进程请求渲染进程弹出指纹确认框 */
 	readonly onDidRequestHostKeyConfirm: Event<IHostKeyPrompt>;
+	/** shell 输出（流式，主进程批量合并后推送） */
+	readonly onDidTerminalOutput: Event<ITerminalOutputEvent>;
+	/** 终端通道关闭（会话断开 / 远端 exit / 用户关闭） */
+	readonly onDidTerminalClose: Event<ITerminalCloseEvent>;
 }
