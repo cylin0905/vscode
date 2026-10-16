@@ -34,7 +34,6 @@ export interface ISshClientLike {
 	on(event: 'error', listener: (err: Error & { level?: string }) => void): ISshClientLike;
 	on(event: 'close', listener: () => void): ISshClientLike;
 	on(event: 'end', listener: () => void): ISshClientLike;
-	on(event: 'handshake', listener: (info: { algorithms: { serverHostKey?: string } }) => void): ISshClientLike;
 	on(event: 'keyboard-interactive', listener: (name: string, instructions: string, instructionsLang: string, prompts: { prompt: string; echo: boolean }[], finish: (answers: string[]) => void) => void): ISshClientLike;
 }
 
@@ -113,7 +112,6 @@ export class SshSession {
 	private retryTimer: ReturnType<typeof setTimeout> | undefined;
 	private pendingRetry: { attemptNo: number; delayMs: number } | undefined;
 	private readonly backoff: BackoffController;
-	private lastHostKeyAlgorithm: string | undefined;
 
 	private readonly _onDidChangeSnapshot = new Emitter<ISshConnectionSnapshot>();
 	readonly onDidChangeSnapshot: Event<ISshConnectionSnapshot> = this._onDidChangeSnapshot.event;
@@ -257,11 +255,6 @@ export class SshSession {
 
 		const client = this.clientFactory();
 		this.client = client;
-		this.lastHostKeyAlgorithm = undefined;
-
-		client.on('handshake', (info) => {
-			this.lastHostKeyAlgorithm = info.algorithms.serverHostKey;
-		});
 
 		client.on('keyboard-interactive', (_name, _instructions, _lang, _prompts, finish) => {
 			// 密码认证被服务端要求 keyboard-interactive 时，用已有凭据应答
@@ -402,7 +395,7 @@ export class SshSession {
 
 	private async verifyHostKey(key: Buffer): Promise<boolean> {
 		const fingerprint = `SHA256:${this.sha256Base64(key)}`;
-		const algorithm = this.lastHostKeyAlgorithm ?? 'unknown';
+		const algorithm = this.parseKeyAlgorithm(key);
 		const { host, port } = this.target;
 		const result = await this.callbacks.onVerifyHostKey(host, port, fingerprint);
 		if (result === 'known') {
@@ -427,5 +420,22 @@ export class SshSession {
 
 	private sha256Base64(key: Buffer): string {
 		return createHash('sha256').update(key).digest('base64');
+	}
+
+	/**
+	 * 从 SSH 公钥 blob 解析算法名（如 ssh-ed25519 / ssh-rsa / ssh-rsa-cert-v01@openssh.com）。
+	 * hostVerifier 在 KEX 期间触发，早于 handshake 事件，算法名只能取自 key blob 首字段（长度前缀字符串）。
+	 */
+	private parseKeyAlgorithm(key: Buffer): string {
+		if (key.length > 8) {
+			const nameLen = key.readUInt32BE(0);
+			if (nameLen > 0 && nameLen <= 64 && 4 + nameLen <= key.length) {
+				const name = key.subarray(4, 4 + nameLen).toString('utf8');
+				if (/^[a-zA-Z0-9@.\-]+$/.test(name)) {
+					return name;
+				}
+			}
+		}
+		return 'unknown';
 	}
 }

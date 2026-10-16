@@ -202,8 +202,9 @@ suite('ishell > SshSession', () => {
 	test('未知指纹用户接受 → 记录 known_hosts 并继续连接', async () => {
 		const h = createHarness();
 		await h.session.connect();
-		h.clients[0].emit('handshake', { algorithms: { serverHostKey: 'ssh-ed25519' } });
-		const accepted = await h.clients[0].connectConfig.hostVerifier(Buffer.from('new-key'));
+		// SSH 公钥 blob：uint32 长度前缀 + 算法名（hostVerifier 早于 handshake 事件，算法名解析自 blob 首字段）
+		const keyBlob = Buffer.concat([Buffer.from([0, 0, 0, 11]), Buffer.from('ssh-ed25519')]);
+		const accepted = await h.clients[0].connectConfig.hostVerifier(keyBlob);
 		assert.strictEqual(accepted, true);
 		assert.strictEqual(h.spy.acceptedCalls.length, 1, '接受后应记录指纹');
 		assert.strictEqual(h.spy.acceptedCalls[0].algorithm, 'ssh-ed25519');
