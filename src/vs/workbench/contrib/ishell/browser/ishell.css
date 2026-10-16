@@ -1,0 +1,68 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) iShell contributors. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.ishell-connections-tree {
+	height: 100%;
+}
+
+.ishell-connections-tree .ishell-row {
+	display: flex;
+	align-items: center;
+	height: 100%;
+}
+
+/* 连接状态圆点：绿在线 / 黄重连 / 蓝连接中 / 红失败 / 灰未连 */
+.ishell-status-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	margin-right: 4px;
+	flex-shrink: 0;
+	background: var(--vscode-descriptionForeground);
+}
+
+.ishell-status-dot.status-connected {
+	background: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #73c991));
+}
+
+.ishell-status-dot.status-reconnecting {
+	background: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.ishell-status-dot.status-connecting {
+	background: var(--vscode-editorInfo-foreground, #3794ff);
+	animation: ishell-pulse 1s ease-in-out infinite;
+}
+
+.ishell-status-dot.status-failed {
+	background: var(--vscode-editorError-foreground, #f48771);
+}
+
+@keyframes ishell-pulse {
+
+	0%,
+	100% {
+		opacity: 1;
+	}
+
+	50% {
+		opacity: 0.25;
+	}
+}
+
+.ishell-connections-tree .codicon.ishell-host-icon {
+	margin-right: 4px;
+	opacity: 0.85;
+}
+
+.ishell-connections-tree .codicon.ishell-group-icon {
+	margin-right: 4px;
+}
+
+.ishell-empty-hint {
+	padding: 8px 12px;
+	color: var(--vscode-descriptionForeground);
+	user-select: none;
+}

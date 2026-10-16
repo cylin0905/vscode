@@ -116,6 +116,9 @@ registerSingleton(IUserDataInitializationService, new SyncDescriptor(UserDataIni
 
 //#region --- workbench contributions
 
+// iShell (connection management)
+import './contrib/ishell/browser/ishell.contribution.js';
+
 // Onboarding
 import './contrib/onboarding/electron-browser/onboardingTryout.contribution.js';
 
