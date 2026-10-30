@@ -473,6 +473,13 @@ export class SshTerminalEditorInput extends EditorInput implements IEditorCloseH
 		}
 	}
 
+	/** 向当前终端通道写入文本（iShell LLM 指令确认按钮使用：插入命令但不自动执行） */
+	sendText(text: string): void {
+		if (text && this._terminalId !== undefined) {
+			this._ishellService.writeTerminal(this._terminalId, text).catch(() => { /* 通道断开时忽略 */ });
+		}
+	}
+
 	// ==== 清理 ====
 
 	override dispose(): void {

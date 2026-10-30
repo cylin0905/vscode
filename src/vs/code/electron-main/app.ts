@@ -45,6 +45,8 @@ import { NativeParsedArgs } from '../../platform/environment/common/argv.js';
 import { IEnvironmentMainService } from '../../platform/environment/electron-main/environmentMainService.js';
 import { IIshellService, ISHELL_IPC_CHANNEL } from '../../workbench/contrib/ishell/common/ishell.js';
 import { IshellMainService } from '../../workbench/contrib/ishell/electron-main/ishellMainService.js';
+import { IIshellLlmService, ISHELL_LLM_IPC_CHANNEL } from '../../workbench/contrib/ishell/common/llm.js';
+import { LlmMainService } from '../../workbench/contrib/ishell/electron-main/llmMainService.js';
 import { isLaunchedFromCli } from '../../platform/environment/node/argvHelper.js';
 import { getResolvedShellEnv } from '../../platform/shell/node/shellEnv.js';
 import { IExtensionHostStarter, ipcExtensionHostStarterChannelName } from '../../platform/extensions/common/extensionHostStarter.js';
@@ -1287,6 +1289,9 @@ export class CodeApplication extends Disposable {
 		// iShell (connection management)
 		services.set(IIshellService, new SyncDescriptor(IshellMainService));
 
+		// iShell (local LLM)
+		services.set(IIshellLlmService, new SyncDescriptor(LlmMainService));
+
 		// Menubar
 		services.set(IMenubarMainService, new SyncDescriptor(MenubarMainService));
 
@@ -1440,6 +1445,10 @@ export class CodeApplication extends Disposable {
 		// iShell (connection management)
 		const ishellChannel = ProxyChannel.fromService(accessor.get(IIshellService), disposables);
 		mainProcessElectronServer.registerChannel(ISHELL_IPC_CHANNEL, ishellChannel);
+
+		// iShell (local LLM)
+		const ishellLlmChannel = ProxyChannel.fromService(accessor.get(IIshellLlmService), disposables);
+		mainProcessElectronServer.registerChannel(ISHELL_LLM_IPC_CHANNEL, ishellLlmChannel);
 
 		// Browser View
 		const browserViewChannel = ProxyChannel.fromService(accessor.get(IBrowserViewMainService), disposables, { unbufferedEvents: ['onDidCreateBrowserView'] });

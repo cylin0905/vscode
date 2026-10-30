@@ -27,19 +27,35 @@ import { IEditorService } from '../../../services/editor/common/editorService.js
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
 import { EditorExtensions } from '../../../common/editor.js';
 import { IIshellService } from '../common/ishell.js';
+import { IIshellLlmService } from '../common/llm.js';
 import { IshellService } from '../electron-sandbox/ishellService.js';
+import { IshellLlmService } from '../electron-sandbox/llmService.js';
 import { ConnectionsView, IshellConnectionsContextMenu, IshellConnectionsTitleMenu } from './connectionsView.js';
 import { connectHost, deleteGroup, deleteHost, moveHostToGroup, pickAndDisconnect } from './connectionActions.js';
 import { showConnectionWizard, showQuickConnect } from './connectionWizard.js';
 import { SshTerminalEditor } from './sshTerminalEditor.js';
 import { SshTerminalEditorInput, DEFAULT_TERMINAL_FONT_SIZE, getTerminalFontSize, setTerminalFontSize } from './sshTerminalEditorInput.js';
 import { newTerminalCommand, openTerminalForProfile, IShellTerminalServices } from './terminalActions.js';
+import { LlmModelsView } from './llmModelsView.js';
+import { LlmModelsEditor } from './llmModelsEditor.js';
+import { LlmModelsEditorInput } from './llmModelsEditorInput.js';
+import { LlmChatModelsContribution } from './llmChatModels.js';
+import { LlmChatAgentContribution } from './llmChatAgent.js';
+import { registerLlmCompletionContribution } from './llmCompletion.js';
+import { LlmDiagnosticsContribution, registerLlmDiagnosticsActions } from './llmDiagnostics.js';
+import { registerLlmFixContribution } from './llmFix.js';
+import { registerLlmHistoryActions } from './llmHistory.js';
+import { registerLlmInstructionActions } from './llmInstructionsExecute.js';
+import { registerLlmActions } from './llmActions.js';
+import { registerLlmSkillActions } from './llmSkills.js';
 
 // ==== 服务注册（渲染层代理 -> 主进程） ====
 
 registerSingleton(IIshellService, IshellService, InstantiationType.Delayed);
+registerSingleton(IIshellLlmService, IshellLlmService, InstantiationType.Delayed);
 
 const ishellViewIcon = registerIcon('ishell-view-icon', Codicon.plug, localize('ishell.viewIcon', 'iShell 连接视图图标'));
+const ishellLlmModelsViewIcon = registerIcon('ishell-llm-models-view-icon', Codicon.chip, localize('ishell.llm.modelsViewIcon', 'iShell 本地模型视图图标'));
 
 // ==== 视图容器（活动栏"连接"） ====
 
@@ -69,6 +85,47 @@ Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([{
 		order: 1,
 	},
 }], container);
+
+// ==== 视图容器（活动栏"本地模型"，与"连接"平级并列；侧边栏厂家导航 + 中间模型广场 + 内置 Chat 对话） ====
+
+const LLM_MODELS_VIEW_CONTAINER_ID = 'workbench.view.ishellLlmModels';
+
+const llmModelsContainer = Registry.as<IViewContainersRegistry>(ViewExtensions.ViewContainersRegistry).registerViewContainer({
+	id: LLM_MODELS_VIEW_CONTAINER_ID,
+	title: localize2('ishell.llmModels.activityTitle', "本地模型"),
+	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [LLM_MODELS_VIEW_CONTAINER_ID, { mergeViewWithContainerWhenSingleView: true }]),
+	icon: ishellLlmModelsViewIcon,
+	storageId: LLM_MODELS_VIEW_CONTAINER_ID,
+	order: 1,
+	hideIfEmpty: false,
+}, ViewContainerLocation.Sidebar, { doNotRegisterOpenCommand: true });
+
+// 本地模型管理视图（独立顶级容器的单视图：引擎状态/下载源/推荐/模型管理）
+Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([{
+	id: LlmModelsView.ID,
+	name: localize2('ishell.llmModelsView', "本地模型"),
+	containerIcon: ishellLlmModelsViewIcon,
+	ctorDescriptor: new SyncDescriptor(LlmModelsView),
+	canToggleVisibility: false,
+	canMoveView: false,
+	openCommandActionDescriptor: {
+		id: LLM_MODELS_VIEW_CONTAINER_ID,
+		mnemonicTitle: localize({ key: 'ishell.llm.miFocusModels', comment: ['&& denotes a mnemonic'] }, "本地&&模型"),
+		title: localize2('ishell.llm.focusModelsView', "本地模型管理"),
+		order: 1,
+	},
+}], llmModelsContainer);
+
+// ==== 本地模型广场编辑器（中间编辑器区域的模型卡片页） ====
+
+Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
+	EditorPaneDescriptor.create(
+		LlmModelsEditor,
+		LlmModelsEditorInput.EDITOR_ID,
+		localize('ishell.llm.modelsEditorName', '本地模型')
+	),
+	[new SyncDescriptor(LlmModelsEditorInput)]
+);
 
 // ==== 远程终端编辑器（M3：终端即编辑器标签） ====
 
@@ -134,6 +191,132 @@ configurationRegistry.registerConfiguration({
 			default: 30,
 			minimum: 1,
 			description: localize('ishell.cfg.reconnectDelay', '自动重连最大间隔（秒）')
+		},
+	}
+});
+
+configurationRegistry.registerConfiguration({
+	id: 'ishell.llm',
+	title: localize('ishell.llmConfigTitle', 'iShell 本地模型'),
+	properties: {
+		'ishell.llm.apiPort': {
+			type: 'number',
+			default: 1234,
+			minimum: 1024,
+			maximum: 65535,
+			description: localize('ishell.llm.cfg.apiPort', '本地 OpenAI 兼容 API 端口（LM Studio 规范，默认 1234；被占用时自动递增）')
+		},
+		'ishell.llm.contextSize': {
+			type: 'number',
+			default: 4096,
+			minimum: 512,
+			maximum: 131072,
+			description: localize('ishell.llm.cfg.contextSize', '模型上下文窗口大小（token 数，越大内存占用越高）')
+		},
+		'ishell.llm.gpuLayers': {
+			type: 'number',
+			default: 0,
+			minimum: 0,
+			maximum: 999,
+			description: localize('ishell.llm.cfg.gpuLayers', '卸载到 GPU/NPU 的层数（0 = 纯 CPU 推理；llama.cpp -ngl 参数）')
+		},
+		'ishell.llm.enginePath': {
+			type: 'string',
+			default: '',
+			description: localize('ishell.llm.cfg.enginePath', '自定义 llama-server.exe 路径（留空 = 使用应用下载的引擎）')
+		},
+		'ishell.llm.modelDirectory': {
+			type: 'string',
+			default: '',
+			description: localize('ishell.llm.cfg.modelDirectory', '模型存储目录（留空 = 使用默认目录）')
+		},
+		'ishell.llm.persistence.enabled': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.persistenceEnabled', '自动持久化本地模型的输出产物（对话转录 Markdown 与代码块文件，原子写入）')
+		},
+		'ishell.llm.persistence.path': {
+			type: 'string',
+			default: '',
+			description: localize('ishell.llm.cfg.persistencePath', '产物保存目录（留空 = 用户数据目录 ishell/llm/artifacts；支持绝对路径或工作区相对路径）')
+		},
+		'ishell.llm.persistence.namingRule': {
+			type: 'string',
+			default: '{date}/{sessionId}/{time}-{requestId}-{slug}{ext}',
+			description: localize('ishell.llm.cfg.namingRule', '自定义产物命名规则。占位符：{date} 日期、{sessionId} 会话、{time} 时刻、{requestId} 请求 id、{slug} 内容摘要、{ext} 扩展名')
+		},
+		'ishell.llm.persistence.includeCodeBlocks': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.includeCodeBlocks', '除转录外，把回答中的每个代码块另存为独立文件（按语言推断扩展名）')
+		},
+		'ishell.llm.instructions.enabled': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.instructionsEnabled', '指令跟随：自动解析并执行回答中的 ### ishell:write / ishell:edit 指令块（终端命令始终需手动确认，不受此开关影响）')
+		},
+		'ishell.llm.instructions.autoRethink': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.autoRethink', '模型自行思考：编辑指令未命中原文或合并冲突时，自动把当前文件与修改意图交回本地模型重写（失败才转为人工裁决）')
+		},
+		'ishell.llm.instructions.streaming': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.streaming', '边思考边编辑：回答仍在流式生成时，一旦指令块闭合立即执行并落盘（每次写盘自动落版本快照；关闭则等回答结束后统一执行）')
+		},
+		'ishell.llm.autoSave.enabled': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.autoSaveEnabled', '模型写入/修改文件前自动落版本快照（供回溯与三方合并；关闭后冲突场景将无法自动合并）')
+		},
+		'ishell.llm.autoSave.historyLimit': {
+			type: 'number',
+			default: 20,
+			minimum: 1,
+			maximum: 200,
+			description: localize('ishell.llm.cfg.historyLimit', '每个文件保留的版本快照上限（超出自动清理最旧版本）')
+		},
+		'ishell.llm.diagnostics.enabled': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.diagnosticsEnabled', '内置静态代码分析（语法错误 / 逻辑异常 / 潜在 bug / 性能问题，结果进问题面板）')
+		},
+		'ishell.llm.diagnostics.onSave': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.diagnosticsOnSave', '文件保存后自动触发静态分析（1.5 秒去抖，仅分析文本文件）')
+		},
+		'ishell.llm.fix.enabled': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.fixEnabled', '模型自动修复：问题灯泡 / 命令面板"用本地模型自动修复"一键让模型改代码（编辑器内可 Ctrl+Z 撤销；写盘自动落版本快照）')
+		},
+		'ishell.llm.fix.maxTokens': {
+			type: 'number',
+			default: 2048,
+			minimum: 128,
+			maximum: 8192,
+			description: localize('ishell.llm.cfg.fixMaxTokens', '自动修复单次生成的 token 上限（大文件需要更大值）')
+		},
+		'ishell.llm.completion.enabled': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.completionEnabled', '本地模型智能代码补全（仅模型运行中生效；失败自动回退默认补全，不干扰输入）')
+		},
+		'ishell.llm.completion.maxTokens': {
+			type: 'number',
+			default: 96,
+			minimum: 16,
+			maximum: 512,
+			description: localize('ishell.llm.cfg.completionMaxTokens', '补全生成 token 上限（越大越慢，建议 32-128）')
+		},
+		'ishell.llm.completion.maxContextLines': {
+			type: 'number',
+			default: 80,
+			minimum: 10,
+			maximum: 400,
+			description: localize('ishell.llm.cfg.completionContextLines', '补全时携带光标前上下文的行数（含当前文件前缀）')
 		},
 	}
 });
@@ -605,3 +788,26 @@ class IshellHostKeyHandler extends Disposable {
 }
 
 registerWorkbenchContribution2(IshellHostKeyHandler.ID, IshellHostKeyHandler, WorkbenchPhase.BlockRestore);
+
+// ==== 本地 LLM（M-L4） ====
+
+registerLlmActions();
+registerLlmInstructionActions();
+registerLlmDiagnosticsActions();
+registerLlmSkillActions();
+registerLlmHistoryActions();
+
+// 本地模型注册为内置 Chat 的语言模型（引擎 running 时注册，stopped 时注销）
+registerWorkbenchContribution2(LlmChatModelsContribution.ID, LlmChatModelsContribution, WorkbenchPhase.AfterRestored);
+
+// 本地模型贡献内置 Chat 的默认参与者（本产品无 Copilot 扩展，缺此注册 Chat 无法发送消息）
+registerWorkbenchContribution2(LlmChatAgentContribution.ID, LlmChatAgentContribution, WorkbenchPhase.AfterRestored);
+
+// 静态代码诊断：文件保存后自动分析 + 结果进问题面板（去抖，不影响保存性能）
+registerWorkbenchContribution2(LlmDiagnosticsContribution.ID, LlmDiagnosticsContribution, WorkbenchPhase.AfterRestored);
+
+// 模型自动修复：诊断问题灯泡一键让模型改代码（Quick Fix + fixFile 命令）
+registerLlmFixContribution();
+
+// 智能代码补全：本地模型运行中提供上下文感知内联补全（失败静默回退）
+registerLlmCompletionContribution();

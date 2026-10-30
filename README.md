@@ -1,76 +1,73 @@
-# Visual Studio Code - Open Source ("Code - OSS")
-[![Feature Requests](https://img.shields.io/github/issues/microsoft/vscode/feature-request.svg)](https://github.com/microsoft/vscode/issues?q=is%3Aopen+is%3Aissue+label%3Afeature-request+sort%3Areactions-%2B1-desc)
-[![Bugs](https://img.shields.io/github/issues/microsoft/vscode/bug.svg)](https://github.com/microsoft/vscode/issues?utf8=✓&q=is%3Aissue+is%3Aopen+label%3Abug)
+# iShell
 
-## The Repository
+**基于 VS Code（Code - OSS 1.143）深度定制的"终端 + 本地 AI"一体化开发环境。**
 
-This repository ("`Code - OSS`") is where we (Microsoft) develop the [Visual Studio Code](https://code.visualstudio.com) product together with the community. Not only do we work on code and issues here, but we also publish our [roadmap](https://github.com/microsoft/vscode/wiki/Roadmap), [monthly iteration plans](https://github.com/microsoft/vscode/wiki/Iteration-Plans), and our [endgame plans](https://github.com/microsoft/vscode/wiki/Running-the-Endgame). This source code is available to everyone under the standard [MIT license](https://github.com/microsoft/vscode/blob/main/LICENSE.txt).
+iShell 在 VS Code 内核基础上，内置 SSH 远程终端与完全离线的本地大模型工作台，去除了 Microsoft 专属服务与遥测，扩展市场替换为 [open-vsx](https://open-vsx.org)。
 
-## Visual Studio Code
+## 核心特性
 
-<p align="center">
-  <img alt="VS Code in action" src="https://github.com/user-attachments/assets/56af271c-949d-454c-a3ea-16188c063414">
-</p>
+### SSH 远程终端
+- 连接管理：SSH 主机配置、密码/密钥认证、host key 校验（从 key blob 解析算法，避免连接崩溃）
+- xterm.js 终端编辑器：远程会话直接作为编辑器标签页打开，支持会话中命令插入确认按钮
+- 终端体验优化与 iShell 应用图标
 
-[Visual Studio Code](https://code.visualstudio.com) is a distribution of the `Code - OSS` repository with Microsoft-specific customizations released under a traditional [Microsoft product license](https://code.visualstudio.com/License/).
+### 本地大模型工作台（llama.cpp）
+完全本地运行，无需任何云服务与 API Key：
 
-[Visual Studio Code](https://code.visualstudio.com) combines the simplicity of a code editor with what developers need for their core edit-build-debug cycle. It provides comprehensive code editing, navigation, and understanding support along with lightweight debugging, a rich extensibility model, and lightweight integration with existing tools.
+- **模型广场**：预置 Qwen / DeepSeek / Llama 系列 GGUF 模型目录（Q4_K_M 量化），品牌专属本地图标（本地静态资源，无在线依赖），模型搜索过滤，下载进度条带实时速度显示（MB/s），按机器内存自动推荐适配模型
+- **网络模型搜索**：左侧视图支持关键词检索 HuggingFace 上的 GGUF 模型仓库，跟随下载源自动切换官方/国内镜像（hf-mirror.com），防抖请求 + 过期结果丢弃，可打开模型主页或复制模型 ID
+- **引擎管理**：llama.cpp llama-server 引擎一键下载（支持 GitHub 直连 / gh-proxy 加速通道），启动后自动开启 OpenAI 兼容 API 网关
+- **对话 Agent**：内置 Chat 参与者"iShell 本地模型"，多轮对话上下文、流式输出、Skill 指令注入、打断续聊
+- **指令跟随（渐进式编辑）**：模型回答中的 `### ishell:write` / `### ishell:edit` / `### ishell:terminal` 指令块边生成边执行——围栏闭合即落盘，无需等待完整回答；写文件自动保存、三方合并冲突检测、终端命令经确认按钮插入
+- **版本历史**：每次模型编辑自动生成版本快照，支持回滚、预览与差异对比
+- **智能补全**：编辑器内联补全，基于光标前后文上下文
+- **快速修复**：诊断问题一键交回模型重写（QuickFix 集成），编辑未命中自动"重新思考"修复
+- **静态诊断**：内置规则引擎（语法/逻辑/bug/性能），保存时自动分析并归档报告
+- **产物持久化**：对话记录、代码块、诊断报告自动归档，支持命名规则与目录配置
+- **Skill 体系**：内置技能 + 用户目录加载 + 扩展注册，触发词命中自动注入 system prompt
+- **日志面板**：系统/引擎/下载/网关/对话五源日志实时查看
 
-Visual Studio Code is updated monthly with new features and bug fixes. You can download it for Windows, macOS, and Linux on the [Visual Studio Code website](https://code.visualstudio.com/Download). To get the latest releases every day, install the [Insiders build](https://code.visualstudio.com/insiders).
+### 其他
+- 品牌与产品名全量替换为 iShell，移除 Microsoft 专属服务
+- 扩展市场默认指向 open-vsx
 
-## Contributing
+## 构建与运行（Windows）
 
-There are many ways in which you can participate in this project, for example:
+```powershell
+# 环境要求：Node.js >= 20，Python 3.x（VS Code 构建脚本依赖）
+npm install        # 安装依赖（首次约 10 分钟）
+npm run compile    # 编译（tsgo，约 1 分钟）
+npm run watch      # 开发模式，增量编译
+```
 
-* [Submit bugs and feature requests](https://github.com/microsoft/vscode/issues), and help us verify them as they are checked in
-* Review [source code changes](https://github.com/microsoft/vscode/pulls)
-* Review the [documentation](https://github.com/microsoft/vscode-docs) and make pull requests for anything from typos to new content.
+启动调试：VS Code 打开本仓库，按 `F5` 启动"iShell"实例。
 
-If you are interested in fixing issues and contributing directly to the codebase, please see the document [How to Contribute](https://github.com/microsoft/vscode/wiki/How-to-Contribute), which covers the following:
+## 测试
 
-* [How to build and run from source](https://github.com/microsoft/vscode/wiki/How-to-Contribute)
-* [The development workflow, including debugging and running tests](https://github.com/microsoft/vscode/wiki/How-to-Contribute#debugging)
-* [Coding guidelines](https://github.com/microsoft/vscode/wiki/Coding-Guidelines)
-* [Submitting pull requests](https://github.com/microsoft/vscode/wiki/How-to-Contribute#pull-requests)
-* [Finding an issue to work on](https://github.com/microsoft/vscode/wiki/How-to-Contribute#where-to-contribute)
-* [Contributing to translations](https://aka.ms/vscodeloc)
+```powershell
+# 运行 iShell 模块全部单元测试
+npm run test-node -- --run-glob "vs/workbench/contrib/ishell/test/node/*.test.js"
 
-## Feedback
+# 单文件运行示例
+npm run test-node -- --run src/vs/workbench/contrib/ishell/test/node/llmCatalog.test.js
+```
 
-* Ask a question on [Stack Overflow](https://stackoverflow.com/questions/tagged/vscode)
-* [Request a new feature](CONTRIBUTING.md)
-* Upvote [popular feature requests](https://github.com/microsoft/vscode/issues?q=is%3Aopen+is%3Aissue+label%3Afeature-request+sort%3Areactions-%2B1-desc)
-* [File an issue](https://github.com/microsoft/vscode/issues)
-* Connect with the extension author community on [GitHub Discussions](https://github.com/microsoft/vscode-discussions/discussions) or [Slack](https://aka.ms/vscode-dev-community)
-* Follow [@code](https://x.com/code) and let us know what you think!
+覆盖指令解析、三方合并、产物存储、诊断引擎、Skill 注册、模型目录、下载器、API 网关、网络搜索等 10 个测试套件。
 
-See our [wiki](https://github.com/microsoft/vscode/wiki/Feedback-Channels) for a description of each of these channels and information on some other available community-driven channels.
+## 目录结构
 
-## Related Projects
+自定义模块全部位于 `src/vs/workbench/contrib/ishell/`，按进程边界分层：
 
-Many of the core components and extensions to VS Code live in their own repositories on GitHub. For example, the [node debug adapter](https://github.com/microsoft/vscode-node-debug) and the [mono debug adapter](https://github.com/microsoft/vscode-mono-debug) repositories are separate from each other. For a complete list, please visit the [Related Projects](https://github.com/microsoft/vscode/wiki/Related-Projects) page on our [wiki](https://github.com/microsoft/vscode/wiki).
+```
+ishell/
+├── common/          # 渲染/主进程共享契约（类型 + 指令解析 + 三方合并）
+├── node/            # Node 能力（引擎、下载、网关、目录、诊断、Skill、版本历史）
+├── electron-main/   # 主进程服务（IPC 编排、引擎进程管理）
+├── electron-sandbox/# 渲染进程服务代理
+├── browser/         # UI（模型广场、侧边栏、Chat Agent、补全、诊断、日志）
+└── test/node/       # 单元测试
+```
 
-## Bundled Extensions
+## 许可证
 
-VS Code includes a set of built-in extensions located in the [extensions](extensions) folder, including grammars and snippets for many languages. Extensions that provide rich language support (inline suggestions, Go to Definition) for a language have the suffix `language-features`. For example, the `json` extension provides coloring for `JSON` and the `json-language-features` extension provides rich language support for `JSON`.
-
-## Development Container
-
-This repository includes a Visual Studio Code Dev Containers / GitHub Codespaces development container.
-
-* For [Dev Containers](https://aka.ms/vscode-remote/download/containers), use the **Dev Containers: Clone Repository in Container Volume...** command, which creates a Docker volume for better disk I/O on macOS and Windows.
-  * If you already have VS Code and Docker installed, you can also click [here](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/microsoft/vscode) to get started. This will cause VS Code to automatically install the Dev Containers extension if needed, clone the source code into a container volume, and spin up a dev container for use.
-
-* For Codespaces, install the [GitHub Codespaces](https://marketplace.visualstudio.com/items?itemName=GitHub.codespaces) extension in VS Code, and use the **Codespaces: Create New Codespace** command.
-
-Docker / the Codespace should have at least **4 cores and 6 GB of RAM (8 GB recommended)** to run a full build. See the [development container README](.devcontainer/README.md) for more information.
-
-## Code of Conduct
-
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information, see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
-
-## License
-
-Copyright (c) Microsoft Corporation. All rights reserved.
-
-Licensed under the [MIT](LICENSE.txt) license.
+[MIT](LICENSE.txt)，基于 [microsoft/vscode](https://github.com/microsoft/vscode) 衍生。上游贡献请遵循 [VS Code 贡献指南](https://github.com/microsoft/vscode/wiki/How-to-Contribute)。
