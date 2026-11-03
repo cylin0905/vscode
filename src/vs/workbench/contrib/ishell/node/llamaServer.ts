@@ -17,6 +17,18 @@ export interface ILlamaServerOptions {
 	modelName: string;
 	contextSize: number;
 	gpuLayers: number;
+	/** CPU 线程数（0 或缺省 = 引擎自动） */
+	threads?: number;
+	/** 提示词批处理大小（缺省 = 引擎默认 2048） */
+	batchSize?: number;
+	/** 微批处理大小（缺省 = 引擎默认） */
+	ubatchSize?: number;
+	/** Flash Attention（缺省 = 引擎自动判断） */
+	flashAttention?: 'auto' | 'on' | 'off';
+	/** K 缓存量化类型 */
+	cacheTypeK?: string;
+	/** V 缓存量化类型 */
+	cacheTypeV?: string;
 }
 
 /** 引擎就绪的等待上限（大模型首次加载可能需要数分钟） */
@@ -64,7 +76,29 @@ export class LlamaServerController extends Disposable {
 			'--port', String(port),
 			'-c', String(options.contextSize),
 			'-ngl', String(options.gpuLayers),
+			// 抑制小模型陷入同一段内容无限复读（llama.cpp 默认 repeat-penalty 为 1.0，几乎不生效）
+			'--repeat-penalty', '1.15',
+			'--repeat-last-n', '256',
 		];
+		// 可选加载参数：仅在模型上显式配置时才下发，避免覆盖引擎默认值
+		if (options.threads !== undefined && options.threads > 0) {
+			args.push('-t', String(options.threads));
+		}
+		if (options.batchSize !== undefined && options.batchSize > 0) {
+			args.push('-b', String(options.batchSize));
+		}
+		if (options.ubatchSize !== undefined && options.ubatchSize > 0) {
+			args.push('-ub', String(options.ubatchSize));
+		}
+		if (options.flashAttention !== undefined) {
+			args.push('--flash-attn', options.flashAttention);
+		}
+		if (options.cacheTypeK) {
+			args.push('--cache-type-k', options.cacheTypeK);
+		}
+		if (options.cacheTypeV) {
+			args.push('--cache-type-v', options.cacheTypeV);
+		}
 		this.log('info', 'engine', `启动 llama-server（端口 ${port}，模型 ${options.modelName}）`);
 		const child = this.child = spawn(options.enginePath, args, { windowsHide: true });
 		this.internalPort = port;

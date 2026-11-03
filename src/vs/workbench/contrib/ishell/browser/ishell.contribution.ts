@@ -54,8 +54,8 @@ import { registerLlmSkillActions } from './llmSkills.js';
 registerSingleton(IIshellService, IshellService, InstantiationType.Delayed);
 registerSingleton(IIshellLlmService, IshellLlmService, InstantiationType.Delayed);
 
-const ishellViewIcon = registerIcon('ishell-view-icon', Codicon.plug, localize('ishell.viewIcon', 'iShell 连接视图图标'));
-const ishellLlmModelsViewIcon = registerIcon('ishell-llm-models-view-icon', Codicon.chip, localize('ishell.llm.modelsViewIcon', 'iShell 本地模型视图图标'));
+const ishellViewIcon = registerIcon('ishell-view-icon', Codicon.terminal, localize('ishell.viewIcon', 'iShell 连接视图图标'));
+const ishellLlmModelsViewIcon = registerIcon('ishell-llm-models-view-icon', Codicon.sparkle, localize('ishell.llm.modelsViewIcon', 'iShell 本地模型视图图标'));
 
 // ==== 视图容器（活动栏"连接"） ====
 
@@ -67,7 +67,7 @@ const container = Registry.as<IViewContainersRegistry>(ViewExtensions.ViewContai
 	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [VIEW_CONTAINER_ID, { mergeViewWithContainerWhenSingleView: true }]),
 	icon: ishellViewIcon,
 	storageId: VIEW_CONTAINER_ID,
-	order: 0,
+	order: 2,
 	hideIfEmpty: false,
 }, ViewContainerLocation.Sidebar, { doNotRegisterOpenCommand: true });
 
@@ -122,7 +122,7 @@ Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane
 	EditorPaneDescriptor.create(
 		LlmModelsEditor,
 		LlmModelsEditorInput.EDITOR_ID,
-		localize('ishell.llm.modelsEditorName', '本地模型')
+		localize('ishell.llm.modelsEditorName', '模型管理')
 	),
 	[new SyncDescriptor(LlmModelsEditorInput)]
 );
@@ -220,6 +220,39 @@ configurationRegistry.registerConfiguration({
 			maximum: 999,
 			description: localize('ishell.llm.cfg.gpuLayers', '卸载到 GPU/NPU 的层数（0 = 纯 CPU 推理；llama.cpp -ngl 参数）')
 		},
+		'ishell.llm.chat.maxTokens': {
+			type: 'number',
+			default: 2048,
+			minimum: 128,
+			maximum: 32768,
+			description: localize('ishell.llm.cfg.chatMaxTokens', '单次对话最多生成的 token 数（防止小模型陷入无限复读；生成文件过大时可调高）')
+		},
+		'ishell.llm.chat.repeatGuardThreshold': {
+			type: 'number',
+			default: 8,
+			minimum: 0,
+			maximum: 50,
+			description: localize('ishell.llm.cfg.repeatGuard', '重复检测阈值：同一段内容（忽略数字）连续出现的行数达到该值时自动中止生成（0 = 关闭检测）')
+		},
+		'ishell.llm.context.files': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.contextFiles', '追问上下文：对话时自动读取相关文件（用户提到的文件 / 本会话改过的文件 / 当前编辑器文件）的当前内容提供给模型，支持「继续优化」类多轮迭代')
+		},
+		'ishell.llm.context.maxFiles': {
+			type: 'number',
+			default: 3,
+			minimum: 0,
+			maximum: 10,
+			description: localize('ishell.llm.cfg.contextMaxFiles', '单轮最多附带多少个文件的内容（0 = 不附带）')
+		},
+		'ishell.llm.context.maxFileChars': {
+			type: 'number',
+			default: 4000,
+			minimum: 500,
+			maximum: 20000,
+			description: localize('ishell.llm.cfg.contextMaxFileChars', '单个文件最多附带的字符数（超出部分截断；总量还会按上下文窗口再收敛）')
+		},
 		'ishell.llm.enginePath': {
 			type: 'string',
 			default: '',
@@ -255,10 +288,42 @@ configurationRegistry.registerConfiguration({
 			default: true,
 			description: localize('ishell.llm.cfg.instructionsEnabled', '指令跟随：自动解析并执行回答中的 ### ishell:write / ishell:edit 指令块（终端命令始终需手动确认，不受此开关影响）')
 		},
+		'ishell.llm.workflow.stagedPlan': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.stagedPlan', '分步工作流：回答前先让模型产出「内部思考 + 任务计划」，再进入代码执行阶段（Trae 式思考 → 规划 → 执行；模型较小会增加一轮耗时，可关闭）')
+		},
+		'ishell.llm.workflow.showThinking': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.showThinking', '展示思考过程：在 Chat 中实时可视化模型的内部思考（流式原地刷新）')
+		},
 		'ishell.llm.instructions.autoRethink': {
 			type: 'boolean',
 			default: true,
 			description: localize('ishell.llm.cfg.autoRethink', '模型自行思考：编辑指令未命中原文或合并冲突时，自动把当前文件与修改意图交回本地模型重写（失败才转为人工裁决）')
+		},
+		'ishell.llm.instructions.autoSaveCodeBlocks': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.autoSaveCodeBlocks', '代码块自动保存：回答中没有 ishell:write 指令时，把回答里的代码块按文件名/语言约定自动保存到当前工作目录（无需手动保存）')
+		},
+		'ishell.llm.instructions.autoRewriteOnAdviceOnly': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.autoRewriteOnAdviceOnly', '强制落地修改：用户要求修复/优化文件但模型只给了建议时，自动要求模型重写完整文件并保存（避免「只提建议不改代码」）')
+		},
+		'ishell.llm.instructions.autoFix': {
+			type: 'boolean',
+			default: true,
+			description: localize('ishell.llm.cfg.autoFix', '自动审查排错：模型写入文件后自动运行静态诊断，发现 error 级问题时自动交回模型修复并复检（而非直接结束对话）')
+		},
+		'ishell.llm.instructions.autoFixMaxRounds': {
+			type: 'number',
+			default: 2,
+			minimum: 0,
+			maximum: 5,
+			description: localize('ishell.llm.cfg.autoFixMaxRounds', '自动排错每个文件最多尝试的修复轮数（0 表示只审查报告，不做修复）')
 		},
 		'ishell.llm.instructions.streaming': {
 			type: 'boolean',

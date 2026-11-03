@@ -112,3 +112,50 @@
 	background: color-mix(in srgb, var(--vscode-editorError-foreground, #f66) 8%, var(--vscode-editor-background));
 	color: var(--vscode-errorForeground, var(--vscode-editorError-foreground));
 }
+
+/* ==== 左侧活动栏：已开发入口使用彩色图标 ==== */
+/* 活动栏图标颜色由 JS 以内联样式写入（激活/非激活态），这里用 !important 固定为彩色 */
+.monaco-workbench .activitybar .action-label.codicon-ishell-view-icon {
+	color: #4ec9b0 !important;
+}
+
+.monaco-workbench .activitybar .action-label.codicon-explorer-view-icon {
+	color: #dcb67a !important;
+}
+
+.monaco-workbench .activitybar .action-label.codicon-ishell-llm-models-view-icon {
+	color: #b39df7 !important;
+}
+
+/* 选中态：现代活动栏会用 checked 规则强制 activeForeground，需要同路径覆盖 */
+.modern-ui .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item.checked .action-label.codicon-ishell-view-icon {
+	color: #4ec9b0 !important;
+}
+
+.modern-ui .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item.checked .action-label.codicon-explorer-view-icon {
+	color: #dcb67a !important;
+}
+
+.modern-ui .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item.checked .action-label.codicon-ishell-llm-models-view-icon {
+	color: #b39df7 !important;
+}
+
+/* 本地模型入口：用「AI」字母作为图标（覆盖 codicon 字形，仅影响活动栏） */
+.monaco-workbench .activitybar .action-label.codicon-ishell-llm-models-view-icon::before {
+	content: 'AI';
+	font-family: var(--vscode-font-family, sans-serif);
+	font-style: normal;
+	font-size: 14px;
+	font-weight: 700;
+	letter-spacing: 0.2px;
+	line-height: 1;
+}
+
+/* 隐藏尚未开发的入口：搜索 / 源代码管理 / 运行调试 / 扩展 / 扩展贡献的调试视图 */
+.monaco-workbench .activitybar .action-item:has(.codicon-search-view-icon),
+.monaco-workbench .activitybar .action-item:has(.codicon-source-control-view-icon),
+.monaco-workbench .activitybar .action-item:has(.codicon-run-view-icon),
+.monaco-workbench .activitybar .action-item:has(.codicon-extensions-view-icon),
+.monaco-workbench .activitybar .action-item:has(.uri-icon) {
+	display: none !important;
+}

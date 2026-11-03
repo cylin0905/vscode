@@ -67,6 +67,7 @@ export class SwitchLlmSourceAction extends Action2 {
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const s = llmServices(accessor);
 		const pick = await s.quickInput.pick<IQuickPickItem & { kind: LlmSourceKind }>([
+			{ label: localize('ishell.llm.srcModelScope', '魔搭社区（ModelScope）'), description: '国内模型社区，GGUF 资源丰富', kind: 'modelscope' },
 			{ label: localize('ishell.llm.srcMirror', '国内镜像源（hf-mirror.com）'), description: '推荐国内网络使用', kind: 'mirror' },
 			{ label: localize('ishell.llm.srcOfficial', '国外官方源（HuggingFace）'), description: '海外网络使用', kind: 'official' },
 			{ label: localize('ishell.llm.srcCustom', '自定义源…'), description: '输入自定义下载端点', kind: 'custom' },

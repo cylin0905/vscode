@@ -18,7 +18,7 @@ import { IWorkspaceContextService } from '../../../../platform/workspace/common/
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { ITextFileService } from '../../../services/textfile/common/textfiles.js';
 import { IIshellLlmService, inferLanguageFromPath } from '../common/llm.js';
-import { ILlmInstruction, ILlmWriteFileInstruction, ILlmEditFileInstruction, LlmInstructionKind } from '../common/llmInstructions.js';
+import { ILlmInstruction, ILlmWriteFileInstruction, ILlmEditFileInstruction, LlmInstructionKind, planAutoSaveFromCodeBlocks } from '../common/llmInstructions.js';
 import { merge3Way } from '../common/llmMerge.js';
 import { applyDiagnosticsToMarkers } from './llmDiagnostics.js';
 import { SshTerminalEditorInput } from './sshTerminalEditorInput.js';
@@ -47,6 +47,8 @@ export interface ILlmInstructionExecResult {
 	forceArgs?: [string, string];
 	/** 写入后的诊断摘要 */
 	diagnostics?: { errors: number; warnings: number; infos: number; score: number };
+	/** 自动审查排错实际执行的修复轮数（>0 表示触发过「诊断 → 模型修复 → 复检」循环） */
+	autoFixRounds?: number;
 }
 
 /** 工作区基准目录（供指令解析与命令使用） */
@@ -110,6 +112,149 @@ export class LlmInstructionExecutor {
 			}
 		}
 		return results;
+	}
+
+	// ==== 自动审查排错：写入不等于结束，error 级诊断自动交回模型修复 ====
+
+	/**
+	 * 对本轮写入且存在 error 级诊断的文件执行「重新诊断 → 模型修复 → 复检」循环：
+	 * 每轮把 error 明细（行号 + 消息 + 建议）交回本地模型重写，写盘前落版本快照，
+	 * 复检通过或达轮数上限为止；进展经 onProgress 即时回报到 Chat。
+	 */
+	async autoReviewAndFix(results: ILlmInstructionExecResult[], onProgress?: (message: string) => void): Promise<ILlmInstructionExecResult[]> {
+		const enabled = this.configurationService.getValue<boolean>('ishell.llm.instructions.autoFix') ?? true;
+		if (!enabled) {
+			return results;
+		}
+		const maxRounds = Math.max(0, Math.min(5, this.configurationService.getValue<number>('ishell.llm.instructions.autoFixMaxRounds') ?? 2));
+		const seen = new Set<string>();
+		for (const result of results) {
+			if (!result.filePath || !result.diagnostics || result.diagnostics.errors <= 0) {
+				continue; // 仅审查写入类产出；无 error 不触发修复
+			}
+			if (result.outcome === 'failed' || result.outcome === 'conflict' || result.outcome === 'pending-confirm') {
+				continue;
+			}
+			const target = resolveWorkspacePath(this.base, result.filePath);
+			if (!target || seen.has(target.toString())) {
+				continue; // 同一文件多条指令只按最终状态审查一轮
+			}
+			seen.add(target.toString());
+			try {
+				let content = await this.readCurrent(target);
+				if (content === undefined) {
+					continue;
+				}
+				const language = inferLanguageFromPath(target.path);
+				let report = await this.llmService.analyzeCode(content, language, target.fsPath);
+				let rounds = 0;
+				while (report.summary.errors > 0 && rounds < maxRounds) {
+					rounds++;
+					const problems = report.diagnostics
+						.filter(d => d.severity === 'error')
+						.map(d => localize('ishell.llm.instructions.autoFixProblem', "第 {0} 行：{1}（建议：{2}）", String(d.line), d.message, d.suggestion));
+					onProgress?.(localize('ishell.llm.instructions.autoFixRound', "自动审查发现 {0} 个错误，交回模型修复（第 {1}/{2} 轮）：{3}",
+						String(report.summary.errors), String(rounds), String(maxRounds), result.filePath));
+					const fixed = await this.llmService.applyModelFix({
+						content,
+						language,
+						problems,
+						instruction: localize('ishell.llm.instructions.autoFixInstruction', '修复以上全部问题。除修复处外其余内容必须逐字保留，不要增删无关代码，输出修复后的完整文件。'),
+					});
+					if (fixed.trim() === '' || fixed === content) {
+						break; // 模型没给出有效修改：保留现状，避免反复空转
+					}
+					await this.recordVersion(target, content);
+					await this.fileService.writeFile(target, VSBuffer.fromString(fixed));
+					content = fixed;
+					report = await this.llmService.analyzeCode(content, language, target.fsPath);
+				}
+				if (rounds > 0) {
+					applyDiagnosticsToMarkers(this.markerService, target, report);
+					result.diagnostics = { errors: report.summary.errors, warnings: report.summary.warnings, infos: report.summary.infos, score: report.summary.score };
+					result.autoFixRounds = rounds;
+					onProgress?.(report.summary.errors === 0
+						? localize('ishell.llm.instructions.autoFixClean', '自动排错完成：{0} 的全部错误已修复', result.filePath)
+						: localize('ishell.llm.instructions.autoFixLeft', "自动排错完成：{0} 修复 {1} 轮后仍剩 {2} 个错误，可继续对话让模型处理", result.filePath, String(rounds), String(report.summary.errors)));
+				}
+			} catch (err) {
+				this.logService.warn(`[ishell-llm] 自动审查排错失败(${result.filePath}): ${(err as Error)?.message ?? err}`);
+			}
+		}
+		return results;
+	}
+
+	// ==== 普通代码块自动保存：模型未用指令协议时，把回答里的代码块直接写入当前目录 ====
+
+	/**
+	 * 代码块自动落盘：回答中未出现 write/edit 指令但包含可识别语言的代码块时，
+	 * 按「正文提到的文件名 → 语言约定名」规划文件名，直接写入工作区当前目录（无需用户手动保存）。
+	 * 同名文件已存在时追加序号，绝不静默覆盖用户已有文件。
+	 */
+	async autoSaveCodeBlocks(answer: string, overwritePaths?: ReadonlySet<string>): Promise<ILlmInstructionExecResult[]> {
+		const results: ILlmInstructionExecResult[] = [];
+		for (const file of planAutoSaveFromCodeBlocks(answer)) {
+			// 之前会话/本轮消息点名过的文件：视为迭代修改，直接更新原文件（先落版本快照）
+			const unique = overwritePaths?.has(file.path)
+				? (() => {
+					const uri = resolveWorkspacePath(this.base, file.path);
+					return uri ? { uri, displayPath: file.path } : undefined;
+				})()
+				: await this.uniquePath(file.path);
+			if (!unique) {
+				results.push({
+					seq: results.length + 1, kind: 'write-file', outcome: 'failed', filePath: file.path,
+					message: localize('ishell.llm.instructions.autoSaveNoPath', '无法解析保存路径（未打开工作区）'),
+				});
+				continue;
+			}
+			try {
+				const current = await this.readCurrent(unique.uri);
+				if (current !== undefined) {
+					await this.recordVersion(unique.uri, current);
+				}
+				await this.fileService.writeFile(unique.uri, VSBuffer.fromString(file.content));
+				const diagnostics = await this.runDiagnostics(unique.uri, file.content, file.language ?? inferLanguageFromPath(unique.uri.path));
+				results.push({
+					seq: results.length + 1,
+					kind: 'write-file',
+					// 由 uniquePath 返回的新路径一定是新建；命中 overwrite 则可能是更新
+					outcome: current === undefined ? 'created' : 'updated',
+					filePath: unique.displayPath,
+					message: current === undefined
+						? localize('ishell.llm.instructions.autoSaved', '已将代码块自动保存到当前目录')
+						: localize('ishell.llm.instructions.autoUpdated', '已按本轮改动更新文件并自动保存（旧版本已存档）'),
+					diagnostics,
+				});
+			} catch (err) {
+				results.push({
+					seq: results.length + 1, kind: 'write-file', outcome: 'failed', filePath: unique.displayPath,
+					message: `${localize('ishell.llm.instructions.autoSaveFailed', '自动保存失败')}: ${(err as Error)?.message ?? err}`,
+				});
+			}
+		}
+		return results;
+	}
+
+	/** 为自动保存选取不冲突的目标路径（同名存在时追加 -1/-2…） */
+	private async uniquePath(relativePath: string): Promise<{ uri: URI; displayPath: string } | undefined> {
+		const slash = relativePath.lastIndexOf('/');
+		const dir = slash === -1 ? '' : relativePath.slice(0, slash + 1);
+		const fileName = slash === -1 ? relativePath : relativePath.slice(slash + 1);
+		const dot = fileName.lastIndexOf('.');
+		const stem = dot === -1 ? fileName : fileName.slice(0, dot);
+		const suffix = dot === -1 ? '' : fileName.slice(dot);
+		for (let i = 0; i < 100; i++) {
+			const candidate = `${dir}${i === 0 ? fileName : `${stem}-${i}${suffix}`}`;
+			const uri = resolveWorkspacePath(this.base, candidate);
+			if (!uri) {
+				return undefined;
+			}
+			if (!(await this.fileService.exists(uri))) {
+				return { uri, displayPath: candidate };
+			}
+		}
+		return undefined;
 	}
 
 	// ==== write-file：自动保存 + 版本快照 + 诊断联动 ====

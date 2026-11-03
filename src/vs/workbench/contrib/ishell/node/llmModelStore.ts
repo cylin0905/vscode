@@ -4,12 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { generateUuid } from '../../../../base/common/uuid.js';
-import { ILlmModelRecord, ILlmSourceConfig, LlmSourceKind } from '../common/llm.js';
+import { ILlmModelParams, ILlmModelRecord, ILlmSourceConfig, LlmSourceKind } from '../common/llm.js';
 import { IFileIO } from './connectionStore.js';
 
 /** 预置下载源端点 */
 export const OFFICIAL_ENDPOINT = 'https://huggingface.co';
 export const MIRROR_ENDPOINT = 'https://hf-mirror.com';
+export const MODELSCOPE_ENDPOINT = 'https://modelscope.cn';
 
 interface ILlmStoreData {
 	version: 1;
@@ -40,6 +41,7 @@ function freshData(): ILlmStoreData {
 const SOURCE_NAMES: Record<LlmSourceKind, string> = {
 	official: '国外官方源（HuggingFace）',
 	mirror: '国内镜像源（hf-mirror.com）',
+	modelscope: '魔搭社区（ModelScope）',
 	custom: '自定义源',
 };
 
@@ -63,7 +65,7 @@ export class LlmModelStore {
 			const parsed = JSON.parse(raw) as Partial<ILlmStoreData>;
 			this.data = {
 				version: 1,
-				sourceKind: (['official', 'mirror', 'custom'] as const).includes(parsed.sourceKind as LlmSourceKind) ? parsed.sourceKind as LlmSourceKind : 'mirror',
+				sourceKind: (['official', 'mirror', 'modelscope', 'custom'] as const).includes(parsed.sourceKind as LlmSourceKind) ? parsed.sourceKind as LlmSourceKind : 'mirror',
 				customEndpoint: typeof parsed.customEndpoint === 'string' ? parsed.customEndpoint : '',
 				engineChannel: parsed.engineChannel === 'direct' || parsed.engineChannel === 'ghproxy' ? parsed.engineChannel : 'ghproxy',
 				engineVersion: typeof parsed.engineVersion === 'string' ? parsed.engineVersion : '',
@@ -82,7 +84,8 @@ export class LlmModelStore {
 			name: SOURCE_NAMES[kind],
 			endpoint: kind === 'official' ? OFFICIAL_ENDPOINT
 				: kind === 'mirror' ? MIRROR_ENDPOINT
-					: this.data.customEndpoint,
+					: kind === 'modelscope' ? MODELSCOPE_ENDPOINT
+						: this.data.customEndpoint,
 			engineChannel: this.data.engineChannel,
 		};
 	}
@@ -141,6 +144,16 @@ export class LlmModelStore {
 		const [removed] = this.data.models.splice(idx, 1);
 		await this.persist();
 		return removed;
+	}
+
+	async updateModelParams(modelId: string, params: ILlmModelParams): Promise<ILlmModelRecord | undefined> {
+		const model = this.data.models.find(m => m.id === modelId);
+		if (!model) {
+			return undefined;
+		}
+		model.params = params;
+		await this.persist();
+		return JSON.parse(JSON.stringify(model));
 	}
 
 	getModelByCatalogId(catalogId: string): ILlmModelRecord | undefined {

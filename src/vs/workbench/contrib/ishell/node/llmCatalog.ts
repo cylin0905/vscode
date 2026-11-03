@@ -3,7 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { arch, cpus, totalmem } from 'os';
+import { execSync } from 'child_process';
+import { arch, cpus, freemem, totalmem } from 'os';
 import { ILlmModelCatalogEntry, ILlmSystemInfo } from '../common/llm.js';
 
 /**
@@ -95,14 +96,40 @@ export function getCatalogEntry(catalogId: string): ILlmModelCatalogEntry | unde
 	return LLM_MODEL_CATALOG.find(m => m.id === catalogId);
 }
 
+/**
+ * 当前可用内存（字节）。
+ * macOS 的 freemem() 只统计完全空闲页（常用于文件缓存后极低，实测仅 ~100MB），
+ * 需要叠加 inactive + speculative 可回收页；其余平台直接用 freemem()。
+ */
+function availableMemoryBytes(): number {
+	if (process.platform === 'darwin') {
+		try {
+			const out = execSync('vm_stat', { encoding: 'utf8' });
+			const pageSize = Number(/page size of (\d+) bytes/.exec(out)?.[1] ?? 0);
+			const pages = (label: string) => Number(new RegExp(`${label}:\\s+(\\d+)\\.`).exec(out)?.[1] ?? 0);
+			const reclaimable = pages('Pages free') + pages('Pages inactive') + pages('Pages speculative');
+			if (pageSize > 0 && reclaimable > 0) {
+				// 可回收页并非全部立即可用，按 80% 保守估计
+				return reclaimable * pageSize * 0.8;
+			}
+		} catch {
+			// vm_stat 不可用时回退 freemem
+		}
+	}
+	return freemem();
+}
+
 /** 读取机器配置并按内存分档生成推荐（minRamGb <= 总内存） */
 export function getLlmSystemInfo(): ILlmSystemInfo {
 	const totalMemGb = Math.round(totalmem() / 1024 / 1024 / 1024);
+	// 可用内存保留一位小数：模型体积接近可用内存时的提示更有意义
+	const availableMemGb = Math.round(availableMemoryBytes() / 1024 / 1024 / 1024 * 10) / 10;
 	const cpuList = cpus();
 	const nodeArch = arch();
 	return {
 		arch: nodeArch,
 		totalMemGb,
+		availableMemGb,
 		cpuModel: cpuList.length > 0 ? cpuList[0].model : 'unknown',
 		cpuCores: cpuList.length,
 		recommendedModelIds: LLM_MODEL_CATALOG

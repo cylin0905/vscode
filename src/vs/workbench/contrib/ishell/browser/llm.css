@@ -10,59 +10,116 @@
 	font-size: 12px;
 }
 
-/* ---- 侧边栏：引擎状态 + 厂家导航 ---- */
+/* ---- 滚动条：统一为主题配色（避免默认白色滚动条） ---- */
+
+/* 模块内所有纵向滚动区（侧边栏厂家、卡片区、网络结果、日志、参数浮层、节点内容、输入框等） */
+.ishell-llm-models,
+.ishell-llm-models-editor,
+.ishell-llm-logs,
+.ishell-llm-music {
+	scrollbar-width: thin;
+	scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4)) transparent;
+}
+
+/* scrollbar-width 不会继承：为各滚动容器逐个声明 */
+.ishell-llm-vendors,
+.ishell-llm-cards-scroll,
+.ishell-llm-network-list,
+.ishell-llm-params,
+.ishell-llm-quant-menu,
+.ishell-llm-logs-list,
+.ishell-llm-music-node-body,
+.ishell-llm-music-textarea {
+	scrollbar-width: thin;
+}
+
+.ishell-llm-models *::-webkit-scrollbar,
+.ishell-llm-models-editor *::-webkit-scrollbar,
+.ishell-llm-logs *::-webkit-scrollbar,
+.ishell-llm-music *::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+
+.ishell-llm-models *::-webkit-scrollbar-track,
+.ishell-llm-models-editor *::-webkit-scrollbar-track,
+.ishell-llm-logs *::-webkit-scrollbar-track,
+.ishell-llm-music *::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.ishell-llm-models *::-webkit-scrollbar-thumb,
+.ishell-llm-models-editor *::-webkit-scrollbar-thumb,
+.ishell-llm-logs *::-webkit-scrollbar-thumb,
+.ishell-llm-music *::-webkit-scrollbar-thumb {
+	background: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4));
+	border-radius: 5px;
+}
+
+.ishell-llm-models *::-webkit-scrollbar-thumb:hover,
+.ishell-llm-models-editor *::-webkit-scrollbar-thumb:hover,
+.ishell-llm-logs *::-webkit-scrollbar-thumb:hover,
+.ishell-llm-music *::-webkit-scrollbar-thumb:hover {
+	background: var(--vscode-scrollbarSlider-hoverBackground, rgba(100, 100, 100, 0.7));
+}
+
+.ishell-llm-models *::-webkit-scrollbar-thumb:active,
+.ishell-llm-models-editor *::-webkit-scrollbar-thumb:active,
+.ishell-llm-logs *::-webkit-scrollbar-thumb:active,
+.ishell-llm-music *::-webkit-scrollbar-thumb:active {
+	background: var(--vscode-scrollbarSlider-activeBackground, rgba(191, 191, 191, 0.4));
+}
+
+.ishell-llm-models *::-webkit-scrollbar-corner,
+.ishell-llm-models-editor *::-webkit-scrollbar-corner,
+.ishell-llm-logs *::-webkit-scrollbar-corner,
+.ishell-llm-music *::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+/* ---- 侧边栏：分类导航 ---- */
 
 .ishell-llm-models {
 	display: flex;
 	flex-direction: column;
 	height: 100%;
 	overflow: hidden;
+	background: var(--vscode-sideBar-background, transparent);
+	/* 统一动效曲线：侧边栏条目 hover / active 共用，避免各处缓动不一致 */
+	--ishell-llm-ease: cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
-.ishell-llm-models-status {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	padding: 10px 12px 6px;
-	white-space: nowrap;
-	overflow: hidden;
+/* 本地模型侧边栏不显示「本地模型」标题栏：隐藏标题并让内容铺满整个侧边栏 */
+.sidebar.pane-composite-part:has(.ishell-llm-models) > .composite.title {
+	display: none !important;
+}
+
+.sidebar.pane-composite-part:has(.ishell-llm-models) > .content {
+	position: absolute;
+	inset: 0;
+	height: auto !important;
+	width: auto !important;
 }
 
 .ishell-llm-vendors {
 	flex: 1;
 	overflow-y: auto;
-	padding: 2px 6px;
+	padding: 8px 10px;
 	box-sizing: border-box;
-}
-
-/* 左侧：模型搜索框 */
-.ishell-llm-models-search {
-	padding: 0 10px 6px;
-	display: flex;
 }
 
 /* 左侧：搜索分组头（本地目录 / 网络模型） */
 .ishell-llm-search-section {
-	padding: 8px 6px 2px;
-	font-size: 10px;
+	padding: 12px 8px 6px;
+	font-size: 11px;
 	font-weight: 600;
-	letter-spacing: 0.5px;
+	letter-spacing: 0.4px;
 	text-transform: uppercase;
 	color: var(--vscode-descriptionForeground);
 	user-select: none;
 }
 
-.ishell-llm-models-search .ishell-llm-search {
-	width: 100%;
-	flex: 1;
-	box-sizing: border-box;
-}
-
 /* 左侧：搜索结果项（图标 + 名称 + 厂家） */
-.ishell-llm-result-item {
-	gap: 6px;
-}
-
 .ishell-llm-result-name {
 	flex: 1;
 	min-width: 0;
@@ -72,47 +129,123 @@
 
 .ishell-llm-result-vendor {
 	flex-shrink: 0;
-	font-size: 10px;
+	font-size: 11px;
 	color: var(--vscode-descriptionForeground);
+	opacity: 0.9;
+}
+
+/* 网络结果体积（如 4.1 GB）：单行显示，避免被名称挤断 */
+.ishell-llm-result-size {
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
 }
 
 .ishell-llm-search-empty {
 	cursor: default;
 	color: var(--vscode-descriptionForeground);
+	background: transparent;
+}
+
+/* 空态/提示行不参与 hover 反馈 */
+.ishell-llm-search-empty:hover {
+	background: transparent;
+	transform: none;
+	box-shadow: none;
+	border-color: transparent;
 }
 
 .ishell-llm-vendor-item-icon {
 	flex-shrink: 0;
-	font-size: 14px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	font-size: 16px;
 	color: var(--vscode-descriptionForeground);
 }
+
+/* 模型分类彩色图标（活动栏基础样式 .monaco-workbench .codicon 优先级更高，需提升） */
+.monaco-workbench .ishell-llm-vendors .ishell-llm-cat-all { color: #b39df7 !important; }
+.monaco-workbench .ishell-llm-vendors .ishell-llm-cat-chat { color: #4fc1ff !important; }
+.monaco-workbench .ishell-llm-vendors .ishell-llm-cat-reasoning { color: #e2b93d !important; }
+.monaco-workbench .ishell-llm-vendors .ishell-llm-cat-code { color: #56d364 !important; }
+.monaco-workbench .ishell-llm-vendors .ishell-llm-cat-vision { color: #c586c0 !important; }
+.monaco-workbench .ishell-llm-vendors .ishell-llm-cat-video { color: #f47067 !important; }
+.monaco-workbench .ishell-llm-vendors .ishell-llm-cat-music { color: #bc8cff !important; }
+.monaco-workbench .ishell-llm-vendors .ishell-llm-cat-audio { color: #79c0ff !important; }
+.monaco-workbench .ishell-llm-vendors .ishell-llm-cat-image { color: #ffa657 !important; }
+.monaco-workbench .ishell-llm-vendors .ishell-llm-cat-embedding { color: #7dd3fc !important; }
+.monaco-workbench .ishell-llm-vendors .ishell-llm-cat-multimodal { color: #ffd580 !important; }
 
 .ishell-llm-vendor-item {
 	display: flex;
 	align-items: center;
-	padding: 6px 10px;
-	border-radius: 4px;
+	gap: 10px;
+	padding: 8px 10px;
+	margin-bottom: 4px;
+	border: 1px solid transparent;
+	border-radius: 6px;
 	cursor: pointer;
-	margin-bottom: 2px;
 	color: var(--vscode-foreground);
 	font-size: 12px;
 	white-space: nowrap;
 	overflow: hidden;
+	transition:
+		background-color 240ms var(--ishell-llm-ease),
+		border-color 240ms var(--ishell-llm-ease),
+		box-shadow 240ms var(--ishell-llm-ease),
+		transform 240ms var(--ishell-llm-ease);
+}
+
+/* 条目内图标统一 18px，避免不同来源图片/codicon 尺寸不一致造成错位 */
+.ishell-llm-vendor-item .ishell-llm-icon {
+	width: 18px;
+	height: 18px;
+}
+
+.ishell-llm-vendor-item .ishell-llm-icon-fallback {
+	font-size: 16px;
 }
 
 .ishell-llm-vendor-item:hover {
 	background: var(--vscode-list-hoverBackground);
+	transform: translateY(-1px) scale(1.01);
+	box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.16));
+}
+
+.ishell-llm-vendor-item:active {
+	transform: translateY(0) scale(0.995);
+	box-shadow: none;
+	transition-duration: 120ms;
 }
 
 .ishell-llm-vendor-item.active {
 	background: var(--vscode-list-activeSelectionBackground);
 	color: var(--vscode-list-activeSelectionForeground);
+	box-shadow: inset 2px 0 0 var(--vscode-focusBorder, var(--vscode-list-activeSelectionBackground));
+}
+
+.ishell-llm-vendor-item.active:hover {
+	box-shadow: inset 2px 0 0 var(--vscode-focusBorder, transparent),
+		0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.16));
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ishell-llm-vendor-item {
+		transition: none;
+	}
+
+	.ishell-llm-vendor-item:hover,
+	.ishell-llm-vendor-item:active {
+		transform: none;
+	}
 }
 
 .ishell-llm-vendor-label {
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: 8px;
 	min-width: 0;
 	flex: 1;
 }
@@ -120,26 +253,29 @@
 .ishell-llm-vendor-label > span:first-child {
 	overflow: hidden;
 	text-overflow: ellipsis;
+	font-weight: 500;
 }
 
 .ishell-llm-vendor-count {
 	flex-shrink: 0;
-	font-size: 10px;
-	min-width: 16px;
-	text-align: center;
-	border-radius: 8px;
-	padding: 0 4px;
-	background: var(--vscode-badge-background);
-	color: var(--vscode-badge-foreground);
-}
-
-.ishell-llm-models-entry {
-	padding: 8px 12px 12px;
-}
-
-.ishell-llm-models-entry .ishell-llm-btn {
-	width: 100%;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
 	box-sizing: border-box;
+	font-size: 10px;
+	line-height: 1;
+	/* 圆形徽标：中性底色，替代默认蓝色胶囊 */
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+	color: var(--vscode-descriptionForeground);
+	font-variant-numeric: tabular-nums;
+}
+
+.ishell-llm-vendor-item.active .ishell-llm-vendor-count {
+	background: color-mix(in srgb, var(--vscode-list-activeSelectionForeground, var(--vscode-foreground)) 20%, transparent);
+	color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
 }
 
 /* ---- 中间编辑器区域：模型广场（工具行 + 系统信息 + 卡片网格 + 日志抽屉） ---- */
@@ -150,6 +286,7 @@
 	height: 100%;
 	overflow: hidden;
 	outline: none;
+	--ishell-llm-ease: cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
 .ishell-llm-models-toolbar {
@@ -172,10 +309,11 @@
 	text-overflow: ellipsis;
 }
 
-/* 系统信息行：搜索框（左）+ 系统信息（右，弹性省略） */
+/* 系统信息行：单行左对齐（搜索框已移至网络分区头部） */
 .ishell-llm-sysline {
 	display: flex;
 	align-items: center;
+	justify-content: flex-start;
 	gap: 8px;
 	padding: 0 16px 8px;
 	border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, #333));
@@ -209,6 +347,71 @@
 	text-overflow: ellipsis;
 }
 
+/* 分类 Tab：本地模型 / 网络模型（切换时只展示对应列表） */
+.ishell-llm-tabs {
+	display: flex;
+	align-items: stretch;
+	flex-wrap: wrap;
+	gap: 4px;
+	padding: 0 16px;
+	border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.2)));
+}
+
+.ishell-llm-tab {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	border: none;
+	border-bottom: 2px solid transparent;
+	border-radius: 4px 4px 0 0;
+	padding: 8px 10px 6px;
+	font-size: 12px;
+	cursor: pointer;
+	transition:
+		color 200ms var(--ishell-llm-ease),
+		background-color 200ms var(--ishell-llm-ease),
+		border-color 200ms var(--ishell-llm-ease);
+}
+
+.ishell-llm-tab:hover {
+	color: var(--vscode-foreground);
+	background: var(--vscode-list-hoverBackground);
+}
+
+.ishell-llm-tab.active {
+	color: var(--vscode-foreground);
+	border-bottom-color: var(--vscode-focusBorder);
+	font-weight: 600;
+}
+
+.ishell-llm-tab:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.ishell-llm-tab-count {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	box-sizing: border-box;
+	font-size: 10px;
+	line-height: 1;
+	/* 圆形徽标：中性底色，与侧边栏计数保持一致 */
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+	color: var(--vscode-descriptionForeground);
+	font-variant-numeric: tabular-nums;
+}
+
+.ishell-llm-tab.active .ishell-llm-tab-count {
+	background: color-mix(in srgb, var(--vscode-foreground) 20%, transparent);
+	color: var(--vscode-foreground);
+}
+
 .ishell-llm-cards-scroll {
 	flex: 1;
 	overflow-y: auto;
@@ -218,33 +421,38 @@
 
 .ishell-llm-cards {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+	/* 单元格不小于 250px，但窗口更窄时收缩为整行宽度，避免卡片被挤压成竖排文字 */
+	grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr));
 	gap: 12px;
 }
 
 .ishell-llm-card {
 	display: flex;
 	flex-direction: column;
+	min-width: 0;
 	padding: 12px 14px;
-	border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, #333));
-	border-radius: 6px;
-	background: var(--vscode-editor-background, var(--vscode-sideBar-background));
-	transition: border-color 0.15s ease, box-shadow 0.15s ease;
+	border: 1px solid var(--vscode-widget-border, #333);
+	border-radius: 8px;
+	background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+	transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
 .ishell-llm-card:hover {
 	border-color: var(--vscode-focusBorder);
-	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+	transform: translateY(-1px);
 }
 
 .ishell-llm-card.ishell-llm-card-running {
 	border-color: var(--vscode-charts-green, #3fb950);
+	box-shadow: 0 0 0 1px rgba(63, 185, 80, 0.25);
 }
 
 .ishell-llm-card-head {
 	display: flex;
 	align-items: center;
 	gap: 6px;
+	min-width: 0;
 	margin-bottom: 4px;
 }
 
@@ -252,6 +460,338 @@
 	grid-column: 1 / -1;
 	padding: 32px 0;
 	text-align: center;
+}
+
+/* 卡片分区标题（网络模型）：通栏，与本地卡片形成视觉分界 */
+.ishell-llm-cards-section {
+	grid-column: 1 / -1;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 8px;
+	padding-bottom: 6px;
+	border-bottom: 1px solid var(--vscode-widget-border, #333);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.ishell-llm-cards-section-title {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ishell-llm-cards-section-hint {
+	margin-left: auto;
+	font-size: 11px;
+	font-weight: 400;
+	flex-shrink: 0;
+}
+
+/* 网络分区头部：可下载仓库标题 + 数量提示，搜索框靠右 */
+.ishell-llm-network-header {
+	margin: 0;
+	padding: 10px 16px 8px;
+	border-bottom: 1px solid var(--vscode-widget-border, #333);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.ishell-llm-network-header .ishell-llm-cards-section-title {
+	flex-shrink: 1;
+	min-width: 0;
+}
+
+.ishell-llm-network-header .ishell-llm-cards-section-hint {
+	margin-left: 0;
+}
+
+.ishell-llm-network-header .ishell-llm-search {
+	margin-left: auto;
+	width: 260px;
+	font-weight: 400;
+}
+
+/* 分区内的提示行（搜索中 / 无结果） */
+.ishell-llm-cards-note {
+	grid-column: 1 / -1;
+	padding: 4px 2px;
+	font-size: 12px;
+}
+
+/* 网络 Tab：卡片区整体占满可视高度，列表内部滚动，底部不再残留空白 */
+.ishell-llm-cards.ishell-llm-cards-network {
+	height: 100%;
+	grid-template-rows: minmax(0, 1fr);
+}
+
+.ishell-llm-cards-network .ishell-llm-network-list {
+	height: 100%;
+	max-height: none;
+	/* 结果较少时卡片按内容高度排列，不被拉伸 */
+	align-content: start;
+}
+
+.ishell-llm-network-list {
+	grid-column: 1 / -1;
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr));
+	gap: 12px;
+	overflow-y: auto;
+	padding-right: 4px;
+	box-sizing: border-box;
+}
+
+/* 网络列表底部：滚动加载提示 / 已加载全部 */
+.ishell-llm-network-note {
+	grid-column: 1 / -1;
+	text-align: center;
+	padding: 8px 0 2px;
+	font-size: 11px;
+}
+
+/* ==== 卡片内量化下拉（自绘：触发器 + 状态徽标 + 浮层列表，支持逐项着色与悬停说明） ==== */
+
+.ishell-llm-quant-trigger {
+	flex: 1 1 140px;
+	min-width: 0;
+	max-width: 100%;
+	height: 24px;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	box-sizing: border-box;
+	font-size: 11px;
+	color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground));
+	/* 主题的 dropdown-background 可能是半透明：叠加一层不透明的 widget 底色，避免卡片内容透出 */
+	background:
+		linear-gradient(var(--vscode-dropdown-background, transparent), var(--vscode-dropdown-background, transparent)),
+		linear-gradient(var(--vscode-editorWidget-background, transparent), var(--vscode-editorWidget-background, transparent)),
+		var(--vscode-editor-background, #252526);
+	border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border, transparent));
+	border-radius: 3px;
+	padding: 0 6px;
+	cursor: pointer;
+	transition: border-color 200ms var(--ishell-llm-ease), background-color 200ms var(--ishell-llm-ease);
+}
+
+.ishell-llm-quant-trigger:hover,
+.ishell-llm-quant-trigger:focus-visible {
+	border-color: var(--vscode-focusBorder);
+	outline: none;
+}
+
+.ishell-llm-quant-label {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	text-align: left;
+	font-weight: 500;
+	font-size: 12px;
+}
+
+.ishell-llm-quant-chevron {
+	flex-shrink: 0;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* 内存状态徽标：不足=警告黄、充足=绿色、未知=中性灰 */
+.ishell-llm-quant-status {
+	flex-shrink: 0;
+	font-size: 10px;
+	line-height: 15px;
+	border-radius: 8px;
+	padding: 0 6px;
+	border: 1px solid transparent;
+	white-space: nowrap;
+}
+
+.ishell-llm-quant-status.risk {
+	color: var(--vscode-editorWarning-foreground, #cca700);
+	background: var(--vscode-inputValidation-warningBackground, rgba(204, 167, 0, 0.16));
+	border-color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.ishell-llm-quant-status.ok {
+	color: var(--vscode-charts-green, #3fb950);
+	background: rgba(63, 185, 80, 0.16);
+	border-color: var(--vscode-charts-green, #3fb950);
+}
+
+.ishell-llm-quant-status.unknown {
+	color: var(--vscode-descriptionForeground);
+	background: var(--vscode-badge-background, transparent);
+	border-color: var(--vscode-widget-border, rgba(128, 128, 128, 0.4));
+}
+
+/* 模型参数配置浮层：卡片「参数」按钮弹出，固定定位 + 不透明背景 */
+.ishell-llm-params {
+	position: fixed;
+	z-index: 2000;
+	width: 320px;
+	max-height: calc(100vh - 24px);
+	overflow-y: auto;
+	box-sizing: border-box;
+	padding: 10px 12px 12px;
+	border-radius: 6px;
+	border: 1px solid var(--vscode-widget-border, var(--vscode-dropdown-border, #444));
+	background:
+		linear-gradient(var(--vscode-dropdown-background, transparent), var(--vscode-dropdown-background, transparent)),
+		linear-gradient(var(--vscode-editorWidget-background, transparent), var(--vscode-editorWidget-background, transparent)),
+		var(--vscode-editor-background, #252526);
+	box-shadow: 0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.6));
+	color: var(--vscode-foreground);
+}
+
+.ishell-llm-params-title {
+	font-size: 12px;
+	font-weight: 600;
+	margin-bottom: 8px;
+}
+
+/* 参数分组标题（加载参数 / 生成参数） */
+.ishell-llm-params-section {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	padding: 6px 0 4px;
+	margin-top: 4px;
+	border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+}
+
+.ishell-llm-params-section:first-of-type {
+	margin-top: 0;
+	border-top: none;
+}
+
+.ishell-llm-params-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	margin-bottom: 6px;
+}
+
+.ishell-llm-params-label {
+	font-size: 12px;
+	color: var(--vscode-foreground);
+}
+
+.ishell-llm-params-input,
+.ishell-llm-params-select {
+	width: 112px;
+	flex-shrink: 0;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	border: 1px solid var(--vscode-input-border, transparent);
+	border-radius: 3px;
+	padding: 3px 6px;
+	font-size: 12px;
+	font-family: inherit;
+	outline: none;
+	box-sizing: border-box;
+}
+
+.ishell-llm-params-select option {
+	background: var(--vscode-dropdown-background, var(--vscode-editor-background, #252526));
+	color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+}
+
+.ishell-llm-params-input:focus,
+.ishell-llm-params-select:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.ishell-llm-params-input::placeholder {
+	color: var(--vscode-input-placeholderForeground);
+}
+
+.ishell-llm-params-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 10px;
+}
+
+/* 浮层列表：挂在 body 上固定定位，逐项显示状态徽标 */
+.ishell-llm-quant-menu {
+	position: fixed;
+	/* 盖在卡片之上，但低于工作台悬停提示容器（2576），悬停说明不会被浮层遮挡 */
+	z-index: 2000;
+	min-width: 240px;
+	max-height: 260px;
+	overflow-y: auto;
+	padding: 4px;
+	box-sizing: border-box;
+	border-radius: 6px;
+	border: 1px solid var(--vscode-widget-border, var(--vscode-dropdown-border, #444));
+	/* 浮层必须完全不透明：主题下拉底色若为 rgba，直接使用会让卡片文字透出来 */
+	background:
+		linear-gradient(var(--vscode-dropdown-background, transparent), var(--vscode-dropdown-background, transparent)),
+		linear-gradient(var(--vscode-editorWidget-background, transparent), var(--vscode-editorWidget-background, transparent)),
+		var(--vscode-editor-background, #252526);
+	box-shadow: 0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.6));
+}
+
+.ishell-llm-quant-option {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 7px 8px;
+	border-radius: 4px;
+	font-size: 12px;
+	cursor: pointer;
+	color: var(--vscode-foreground);
+}
+
+.ishell-llm-quant-option:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.ishell-llm-quant-option.selected {
+	background: var(--vscode-list-activeSelectionBackground);
+	color: var(--vscode-list-activeSelectionForeground);
+}
+
+.ishell-llm-quant-option-label {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.2px;
+	color: var(--vscode-foreground);
+}
+
+.ishell-llm-quant-option-size {
+	flex-shrink: 0;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+/* 大体积模型的下载按钮：同样以悬停提示代替弹窗 */
+.ishell-llm-btn-risk {
+	border-color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+/* 网络模型卡片：虚线边框 + 网络标签/已下载徽标配色 */
+.ishell-llm-card-network {
+	border-style: dashed;
+}
+
+/* 复合选择器：后文 .ishell-llm-card-tag / .ishell-llm-badge 基础样式不得覆盖此处配色 */
+.ishell-llm-card-tag.ishell-llm-card-tag-network {
+	color: var(--vscode-charts-blue, #4493f8);
+}
+
+.ishell-llm-badge.ishell-llm-badge-downloaded {
+	background: var(--vscode-charts-green, #3fb950);
+	color: #fff;
 }
 
 /* 模型图标：网络图片优先，占位/回退 codicon（颜色按类型：代码蓝 / 推理黄 / 对话绿） */
@@ -300,6 +840,8 @@
 }
 
 .ishell-llm-card-name {
+	flex: 1 1 auto;
+	min-width: 0;
 	font-weight: 600;
 	font-size: 13px;
 	overflow: hidden;
@@ -310,11 +852,30 @@
 .ishell-llm-card-tag {
 	font-size: 11px;
 	color: var(--vscode-descriptionForeground);
-	border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, #444));
-	border-radius: 3px;
-	padding: 0 4px;
+	border: 1px solid currentColor;
+	border-radius: 10px;
+	padding: 0 6px;
 	margin-left: auto;
 	flex-shrink: 0;
+	white-space: nowrap;
+	opacity: 0.9;
+}
+
+/* 类型标签配色：代码蓝 / 推理黄 / 对话绿 */
+.ishell-llm-card-tag-code {
+	color: var(--vscode-charts-blue, #4493f8);
+}
+
+.ishell-llm-card-tag-reasoning {
+	color: var(--vscode-editorWarning-foreground, #d29922);
+}
+
+.ishell-llm-card-tag-chat {
+	color: var(--vscode-charts-green, #3fb950);
+}
+
+.ishell-llm-card-tag-music {
+	color: var(--vscode-charts-purple, #bc8cff);
 }
 
 .ishell-llm-card-desc {
@@ -325,6 +886,32 @@
 .ishell-llm-card-spec {
 	font-size: 11px;
 	margin-bottom: 8px;
+}
+
+/* 本地卡片：已下载量化文件名（单行省略，悬停查看完整路径） */
+.ishell-llm-card-file {
+	font-size: 11px;
+	margin-bottom: 4px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* 网络卡片：已下载量化文件标签（量化 + 体积） */
+.ishell-llm-card-quants {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-bottom: 8px;
+}
+
+.ishell-llm-card-quant {
+	font-size: 11px;
+	color: var(--vscode-charts-green, #3fb950);
+	border: 1px solid currentColor;
+	border-radius: 10px;
+	padding: 0 8px;
+	white-space: nowrap;
 }
 
 .ishell-llm-card-actions {
@@ -347,6 +934,9 @@
 /* 状态徽标 */
 .ishell-llm-badge {
 	display: inline-block;
+	/* 徽标不参与挤压，避免卡片变窄时中文被拆成竖排 */
+	flex-shrink: 0;
+	white-space: nowrap;
 	font-size: 11px;
 	padding: 1px 8px;
 	border-radius: 8px;
@@ -365,13 +955,19 @@
 	background: var(--vscode-editorWarning-foreground, #d29922);
 	color: #fff;
 }
-.ishell-llm-badge-ready, .ishell-llm-badge-stopped {
+/* 已就绪：绿色；已停止保持中性灰 */
+.ishell-llm-badge-ready {
+	background: var(--vscode-charts-green, #3fb950);
+	color: #fff;
+}
+.ishell-llm-badge-stopped {
 	background: var(--vscode-badge-background);
 	color: var(--vscode-badge-foreground);
 }
+/* 推荐：淡紫色 */
 .ishell-llm-badge-recommend {
-	background: var(--vscode-charts-blue, #4493f8);
-	color: #fff;
+	background: #c4b5fd;
+	color: #2b1d4a;
 }
 
 /* 按钮 */
@@ -379,24 +975,38 @@
 	background: var(--vscode-button-secondaryBackground);
 	color: var(--vscode-button-secondaryForeground);
 	border: none;
-	border-radius: 2px;
+	border-radius: 4px;
 	padding: 4px 12px;
 	font-size: 12px;
+	font-family: inherit;
 	cursor: pointer;
+	transition: background-color 0.15s ease;
 }
 .ishell-llm-btn:hover:not(:disabled) {
 	background: var(--vscode-button-secondaryHoverBackground);
 }
+/* 主操作按钮（启动 / 下载 / 生成等）：淡紫色 */
 .ishell-llm-btn-primary {
-	background: var(--vscode-button-background);
-	color: var(--vscode-button-foreground);
+	background: #c4b5fd;
+	color: #2b1d4a;
 }
 .ishell-llm-btn-primary:hover:not(:disabled) {
-	background: var(--vscode-button-hoverBackground);
+	background: #d3c8fe;
 }
 .ishell-llm-btn-active {
-	background: var(--vscode-button-background);
-	color: var(--vscode-button-foreground);
+	background: #c4b5fd;
+	color: #2b1d4a;
+}
+.ishell-llm-btn-active:hover:not(:disabled) {
+	background: #d3c8fe;
+}
+/* 危险操作（停止模型）：红色背景 */
+.ishell-llm-btn-danger {
+	background: var(--vscode-statusBarItem-errorBackground, #c72e0f);
+	color: var(--vscode-statusBarItem-errorForeground, #ffffff);
+}
+.ishell-llm-btn-danger:hover:not(:disabled) {
+	background: var(--vscode-statusBarItem-errorHoverBackground, #a1250c);
 }
 .ishell-llm-btn:disabled {
 	opacity: 0.5;
@@ -414,6 +1024,11 @@
 	background: var(--vscode-toolbar-hoverBackground);
 }
 
+/* 危险操作图标按钮（如删除模型）：hover 变红提示 */
+.ishell-llm-btn-icon-danger:hover {
+	color: var(--vscode-editorError-foreground, #f14c4c);
+}
+
 /* 进度条 */
 .ishell-llm-progress {
 	flex: 1;
@@ -427,7 +1042,7 @@
 }
 .ishell-llm-progress-fill {
 	height: 100%;
-	background: var(--vscode-charts-blue, #4493f8);
+	background: #b7a1f5;
 	transition: width 0.25s ease;
 }
 .ishell-llm-progress-label {
@@ -470,6 +1085,32 @@
 	border-color: var(--vscode-focusBorder);
 }
 
+/* 日志过滤下拉框（级别 / 来源）：与主题下拉控件配色一致 */
+.ishell-llm-select {
+	height: 24px;
+	box-sizing: border-box;
+	flex-shrink: 0;
+	background: var(--vscode-dropdown-background);
+	color: var(--vscode-dropdown-foreground);
+	border: 1px solid var(--vscode-dropdown-border, transparent);
+	border-radius: 3px;
+	padding: 0 4px;
+	font-size: 12px;
+	font-family: inherit;
+	outline: none;
+	cursor: pointer;
+}
+
+.ishell-llm-select:hover,
+.ishell-llm-select:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.ishell-llm-select option {
+	background: var(--vscode-dropdown-listBackground, var(--vscode-dropdown-background));
+	color: var(--vscode-dropdown-foreground);
+}
+
 .ishell-llm-logs-count {
 	font-size: 11px;
 	white-space: nowrap;
@@ -482,6 +1123,9 @@
 	font-family: var(--monaco-monospace-font);
 	font-size: 12px;
 	line-height: 1.6;
+	/* 支持鼠标拖选日志文本（右键复制） */
+	user-select: text;
+	cursor: text;
 }
 
 .ishell-llm-log-line {
@@ -523,4 +1167,623 @@
 .ishell-llm-log-error .ishell-llm-log-level,
 .ishell-llm-log-error .ishell-llm-log-message {
 	color: var(--vscode-editorError-foreground, #f14c4c);
+}
+
+/* ==== 音乐生成区（audio.cpp / Yue2） ==== */
+
+.ishell-llm-music {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 14px 16px;
+	min-height: 100%;
+	box-sizing: border-box;
+	/* 音乐区是一整块工作流画布：在卡片网格中通栏展示 */
+	grid-column: 1 / -1;
+}
+
+.ishell-llm-music-header {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.ishell-llm-music-title {
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.ishell-llm-music-header-hint {
+	font-size: 11px;
+}
+
+/* 节点式画布（ComfyUI 风格）：节点可拖动 / 缩放，连线可弯曲 */
+.ishell-llm-music-graph {
+	position: relative;
+	width: 100%;
+	/* 高度由 layoutMusicGraph 按节点分布自适应 */
+	height: 560px;
+	border-radius: 8px;
+	background-image: radial-gradient(rgba(128, 128, 128, 0.14) 1px, transparent 1px);
+	background-size: 20px 20px;
+}
+
+.ishell-llm-music-node {
+	/* 卡片配色多样化：每个节点自带强调色（标题、边框、端口、连线同色系） */
+	--ishell-node-accent: var(--vscode-charts-blue, #4493f8);
+	position: absolute;
+	top: 0;
+	left: 0;
+	z-index: 1;
+	display: flex;
+	flex-direction: column;
+	width: 440px;
+	min-width: 260px;
+	border: 1px solid color-mix(in srgb, var(--ishell-node-accent) 45%, var(--vscode-widget-border, #454545));
+	border-radius: 8px;
+	background:
+		linear-gradient(180deg, color-mix(in srgb, var(--ishell-node-accent) 10%, transparent), transparent 120px),
+		var(--vscode-editorWidget-background, #252526);
+	box-shadow:
+		0 6px 18px rgba(0, 0, 0, 0.22),
+		inset 0 1px 0 color-mix(in srgb, var(--ishell-node-accent) 28%, transparent);
+}
+
+.ishell-llm-music-node-model { --ishell-node-accent: var(--vscode-charts-blue, #4493f8); }
+.ishell-llm-music-node-lyrics { --ishell-node-accent: var(--vscode-charts-green, #89d185); }
+.ishell-llm-music-node-style { --ishell-node-accent: var(--vscode-charts-purple, #b180d7); }
+.ishell-llm-music-node-result { --ishell-node-accent: var(--vscode-charts-orange, #d18616); }
+
+.ishell-llm-music-node-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	border-bottom: 1px solid color-mix(in srgb, var(--ishell-node-accent) 32%, transparent);
+	background: color-mix(in srgb, var(--ishell-node-accent) 15%, var(--vscode-editorGroupHeader-tabsBackground, #252526));
+	border-radius: 8px 8px 0 0;
+	cursor: grab;
+	user-select: none;
+	flex-shrink: 0;
+}
+
+.ishell-llm-music-node-dragging .ishell-llm-music-node-head {
+	cursor: grabbing;
+}
+
+.ishell-llm-music-node-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	flex-shrink: 0;
+	background: var(--ishell-node-accent);
+}
+
+.ishell-llm-music-node-title {
+	font-size: 12px;
+	font-weight: 600;
+	white-space: nowrap;
+	color: var(--ishell-node-accent);
+}
+
+.ishell-llm-music-node-sub {
+	font-size: 10px;
+	margin-left: auto;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ishell-llm-music-node-body {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 10px 12px 12px;
+	min-width: 0;
+	flex: 1 1 auto;
+	overflow: auto;
+	border-radius: 0 0 8px 8px;
+}
+
+/* 模型加载节点没有可拉伸控件：拉高时让各行均匀铺开，避免底部大片留白 */
+.ishell-llm-music-node-model .ishell-llm-music-node-body {
+	justify-content: space-between;
+}
+
+/* 右下角缩放把手 */
+.ishell-llm-music-resize {
+	position: absolute;
+	right: 0;
+	bottom: 0;
+	width: 16px;
+	height: 16px;
+	cursor: nwse-resize;
+	z-index: 3;
+	opacity: 0.6;
+	border-bottom-right-radius: 8px;
+	background:
+		linear-gradient(135deg,
+			transparent 46%,
+			var(--ishell-node-accent) 46% 52%,
+			transparent 52% 62%,
+			var(--ishell-node-accent) 62% 68%,
+			transparent 68%);
+}
+
+.ishell-llm-music-resize:hover {
+	opacity: 1;
+}
+
+/* 端口 + 连线 */
+.ishell-llm-music-port {
+	position: absolute;
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	background: var(--ishell-node-accent);
+	box-shadow: 0 0 0 2px var(--vscode-editorWidget-background, #252526);
+	z-index: 2;
+	pointer-events: none;
+}
+
+.ishell-llm-music-port-left { left: -5px; top: 50%; transform: translateY(-50%); }
+.ishell-llm-music-port-right { right: -5px; top: 50%; transform: translateY(-50%); }
+.ishell-llm-music-port-top { top: -5px; left: 50%; transform: translateX(-50%); }
+.ishell-llm-music-port-bottom { bottom: -5px; left: 50%; transform: translateX(-50%); }
+
+.ishell-llm-music-edges {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	overflow: visible;
+	z-index: 0;
+}
+
+.ishell-llm-music-edge {
+	fill: none;
+	stroke: var(--vscode-charts-blue, #4493f8);
+	stroke-width: 1.6;
+	stroke-opacity: 0.6;
+	stroke-dasharray: 6 4;
+	animation: ishell-llm-music-edge-flow 1.8s linear infinite;
+}
+
+.ishell-llm-music-edge[data-accent="lyrics"] { stroke: var(--vscode-charts-green, #89d185); }
+.ishell-llm-music-edge[data-accent="style"] { stroke: var(--vscode-charts-purple, #b180d7); }
+.ishell-llm-music-edge[data-accent="result"] { stroke: var(--vscode-charts-orange, #d18616); }
+
+/* 曲线中点手柄：拖动可自由弯曲连线 */
+.ishell-llm-music-edge-handle {
+	fill: var(--vscode-editorWidget-background, #252526);
+	stroke: var(--vscode-charts-blue, #4493f8);
+	stroke-width: 1.5;
+	opacity: 0.85;
+	cursor: grab;
+}
+
+.ishell-llm-music-edge-handle[data-accent="lyrics"] { stroke: var(--vscode-charts-green, #89d185); }
+.ishell-llm-music-edge-handle[data-accent="style"] { stroke: var(--vscode-charts-purple, #b180d7); }
+.ishell-llm-music-edge-handle[data-accent="result"] { stroke: var(--vscode-charts-orange, #d18616); }
+
+.ishell-llm-music-edge-handle:hover {
+	opacity: 1;
+	fill: var(--vscode-list-hoverBackground, #2a2d2e);
+}
+
+@keyframes ishell-llm-music-edge-flow {
+	to { stroke-dashoffset: -20; }
+}
+
+/* 容器变窄时（由 layoutMusicGraph 判定）切换为单列堆叠，连线随之隐藏 */
+.ishell-llm-music-graph.ishell-llm-music-graph-narrow {
+	display: flex;
+	flex-direction: column;
+	gap: 20px;
+	height: auto !important;
+}
+
+.ishell-llm-music-graph-narrow .ishell-llm-music-node {
+	position: static;
+	width: auto !important;
+	height: auto !important;
+}
+
+.ishell-llm-music-graph-narrow .ishell-llm-music-port,
+.ishell-llm-music-graph-narrow .ishell-llm-music-resize {
+	display: none;
+}
+
+.ishell-llm-music-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.ishell-llm-music-row-column {
+	align-items: stretch;
+	flex-direction: column;
+}
+
+.ishell-llm-music-label {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	width: 108px;
+	flex: 0 0 auto;
+	min-width: 0;
+	line-height: 1.35;
+	/* 文字超出时换行自适应，不撑破节点 */
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+
+.ishell-llm-music-row-column .ishell-llm-music-label {
+	width: auto;
+}
+
+.ishell-llm-music-select {
+	flex: 1;
+	/* 覆盖 params-select 的固定 112px，否则下拉文字会被截断 */
+	width: auto;
+	min-width: 0;
+	max-width: 100%;
+	text-overflow: ellipsis;
+	height: 26px;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	border: 1px solid transparent;
+	border-radius: 3px;
+	padding: 2px 6px;
+	font-size: 12px;
+	font-family: inherit;
+	outline: none;
+}
+
+.ishell-llm-music-select:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.ishell-llm-music-select option {
+	background: var(--vscode-dropdown-background, var(--vscode-editor-background, #252526));
+	color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+}
+
+.ishell-llm-music-input {
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	border: 1px solid var(--vscode-input-border, transparent);
+	border-radius: 3px;
+	padding: 4px 6px;
+	font-size: 12px;
+	font-family: inherit;
+	outline: none;
+	box-sizing: border-box;
+}
+
+.ishell-llm-music-row > .ishell-llm-music-input {
+	flex: 1;
+	min-width: 0;
+	max-width: 100%;
+	text-overflow: ellipsis;
+}
+
+.ishell-llm-music-input:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+/* 数字输入：隐藏原生白色微调按钮（深色主题下是白色方块），↑↓ 键仍可微调 */
+.ishell-llm-music-input[type='number']::-webkit-inner-spin-button,
+.ishell-llm-music-input[type='number']::-webkit-outer-spin-button,
+.ishell-llm-params-input[type='number']::-webkit-inner-spin-button,
+.ishell-llm-params-input[type='number']::-webkit-outer-spin-button {
+	-webkit-appearance: none;
+	appearance: none;
+	margin: 0;
+}
+
+.ishell-llm-music-input[type='number'],
+.ishell-llm-params-input[type='number'] {
+	-moz-appearance: textfield;
+}
+
+.ishell-llm-music-textarea {
+	width: 100%;
+	flex: 1 1 auto;
+	min-height: 64px;
+	resize: none;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	border: 1px solid var(--vscode-input-border, transparent);
+	border-radius: 3px;
+	padding: 6px 8px;
+	font-size: 13px;
+	font-family: inherit;
+	line-height: 1.5;
+	outline: none;
+	box-sizing: border-box;
+}
+
+.ishell-llm-music-textarea.ishell-llm-music-lyrics {
+	min-height: 120px;
+}
+
+/* 风格描述：标题在上，输入框随节点高度拉伸 */
+.ishell-llm-music-style-field {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	gap: 6px;
+	/* 至少容纳标题 + 输入框最小高度：节点缩小时由 body 内部滚动，避免输入框压住参数行 */
+	min-height: 88px;
+}
+
+.ishell-llm-music-style-field .ishell-llm-music-label {
+	flex-shrink: 0;
+}
+
+.ishell-llm-music-textarea:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.ishell-llm-music-params {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr));
+	gap: 10px;
+	/* 参数行不参与压缩：节点过矮时整体滚动，避免与风格描述重叠 */
+	flex-shrink: 0;
+}
+
+.ishell-llm-music-field {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.ishell-llm-music-field .ishell-llm-music-label {
+	width: auto;
+}
+
+.ishell-llm-music-field .ishell-llm-music-input,
+.ishell-llm-music-field .ishell-llm-params-select {
+	flex: 1;
+	min-width: 0;
+	height: 26px;
+	box-sizing: border-box;
+}
+
+/* 统一音乐控件边框：去掉部分控件的原生白色边框，只保留聚焦态 */
+.ishell-llm-music-input,
+.ishell-llm-music-textarea,
+.ishell-llm-music-select,
+.ishell-llm-music-field .ishell-llm-params-select {
+	border-color: transparent;
+}
+
+/* 下拉框改用自绘外观，避免原生白色底/边框 */
+.ishell-llm-music-graph select {
+	appearance: none;
+	-webkit-appearance: none;
+	padding-right: 22px;
+	background-color: var(--vscode-input-background);
+	background-image:
+		linear-gradient(45deg, transparent 50%, var(--vscode-descriptionForeground) 50%),
+		linear-gradient(135deg, var(--vscode-descriptionForeground) 50%, transparent 50%);
+	background-position:
+		calc(100% - 13px) calc(50% + 1px),
+		calc(100% - 9px) calc(50% + 1px);
+	background-size: 4px 4px, 4px 4px;
+	background-repeat: no-repeat;
+	border: 1px solid transparent;
+	border-radius: 3px;
+}
+
+/* 其余下拉框同样自绘箭头，避免原生白色三角 */
+.ishell-llm-select,
+.ishell-llm-params-select {
+	appearance: none;
+	-webkit-appearance: none;
+	padding-right: 22px;
+	background-image:
+		linear-gradient(45deg, transparent 50%, var(--vscode-descriptionForeground) 50%),
+		linear-gradient(135deg, var(--vscode-descriptionForeground) 50%, transparent 50%);
+	background-position:
+		calc(100% - 13px) calc(50% + 1px),
+		calc(100% - 9px) calc(50% + 1px);
+	background-size: 4px 4px, 4px 4px;
+	background-repeat: no-repeat;
+}
+
+.ishell-llm-music-input:focus,
+.ishell-llm-music-textarea:focus,
+.ishell-llm-music-select:focus,
+.ishell-llm-music-field .ishell-llm-params-select:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.ishell-llm-music-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	justify-content: flex-end;
+}
+
+.ishell-llm-btn-busy {
+	opacity: 0.65;
+	cursor: progress;
+}
+
+.ishell-llm-music-status-row {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+}
+
+.ishell-llm-music-status {
+	font-size: 12px;
+	min-height: 16px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.ishell-llm-music-elapsed {
+	font-size: 11px;
+	font-family: var(--monaco-monospace-font);
+	white-space: nowrap;
+	flex-shrink: 0;
+}
+
+.ishell-llm-music-meta {
+	display: flex;
+	gap: 14px;
+	font-size: 11px;
+	flex-wrap: wrap;
+}
+
+.ishell-llm-music-progress-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.ishell-llm-music-progress {
+	position: relative;
+	flex: 1 1 auto;
+	min-width: 0;
+	height: 8px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--vscode-foreground) 20%, transparent);
+	box-shadow: inset 0 0 0 1px var(--vscode-widget-border, transparent);
+	overflow: hidden;
+}
+
+.ishell-llm-music-progress-fill {
+	width: 0;
+	height: 100%;
+	border-radius: 4px;
+	background: linear-gradient(90deg,
+		var(--vscode-charts-blue, #4493f8),
+		var(--vscode-charts-purple, #b180d7));
+	transition: width 0.25s ease;
+}
+
+.ishell-llm-music-percent {
+	min-width: 34px;
+	text-align: right;
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.ishell-llm-music-result {
+	display: flex;
+	flex: 1 1 auto;
+	justify-content: flex-end;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+	box-sizing: border-box;
+}
+
+.ishell-llm-music-result-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.ishell-llm-music-audio {
+	display: none;
+}
+
+/* 自绘播放器：深色主题，与结果节点配色一致 */
+.ishell-llm-music-player {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 10px;
+	border: 1px solid color-mix(in srgb, var(--ishell-node-accent, #d18616) 30%, transparent);
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.ishell-llm-music-player-toggle {
+	width: 28px;
+	height: 28px;
+	flex-shrink: 0;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: none;
+	border-radius: 50%;
+	color: #fff;
+	cursor: pointer;
+	background: linear-gradient(135deg,
+		var(--vscode-charts-blue, #4493f8),
+		var(--vscode-charts-purple, #b180d7));
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+	transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+.ishell-llm-music-player-toggle:hover {
+	filter: brightness(1.12);
+	transform: scale(1.04);
+}
+
+.ishell-llm-music-player-toggle:active {
+	transform: scale(0.96);
+}
+
+.ishell-llm-music-player-toggle .codicon {
+	font-size: 16px;
+}
+
+.ishell-llm-music-seek {
+	flex: 1 1 auto;
+	min-width: 0;
+	-webkit-appearance: none;
+	appearance: none;
+	height: 4px;
+	border-radius: 2px;
+	cursor: pointer;
+	background: linear-gradient(90deg,
+		var(--vscode-charts-blue, #4493f8) 0,
+		var(--vscode-charts-purple, #b180d7) var(--ishell-seek, 0%),
+		color-mix(in srgb, var(--vscode-foreground) 22%, transparent) var(--ishell-seek, 0%),
+		color-mix(in srgb, var(--vscode-foreground) 22%, transparent) 100%);
+}
+
+.ishell-llm-music-seek::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	background: var(--vscode-charts-purple, #b180d7);
+	border: 2px solid var(--vscode-editorWidget-background, #252526);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-charts-purple, #b180d7) 60%, transparent);
+}
+
+.ishell-llm-music-seek:focus {
+	outline: none;
+}
+
+.ishell-llm-music-time {
+	flex-shrink: 0;
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.ishell-llm-music-path {
+	font-size: 11px;
+	font-family: var(--monaco-monospace-font);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	user-select: text;
 }

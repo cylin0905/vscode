@@ -36,6 +36,9 @@ suite('ishell > LlmCatalog', () => {
 	test('getLlmSystemInfo 推荐与实际内存分档一致', () => {
 		const info = getLlmSystemInfo();
 		assert.ok(info.totalMemGb > 0);
+		// 可用内存用于下载前提示：应为非负且不超过总量
+		assert.ok(info.availableMemGb >= 0);
+		assert.ok(info.availableMemGb <= info.totalMemGb + 1);
 		assert.ok(info.cpuCores >= 1);
 		assert.ok(info.cpuModel.length > 0);
 		assert.ok(info.arch.length > 0);

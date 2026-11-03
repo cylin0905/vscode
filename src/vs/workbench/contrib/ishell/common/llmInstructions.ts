@@ -60,6 +60,11 @@ const HEADING_RE = /^#{1,6}\s*ishell:(write|edit|terminal)\b[ \t]*(\S+)?[ \t]*$/
 const FENCE_OPEN_RE = /^\s*```\s*([\w+#.-]*)\s*$/;
 const FENCE_CLOSE_RE = /^\s*```\s*$/;
 
+/** 剥掉模型在路径两端自作主张包上的引号 / 反引号（含中文全角引号），避免文件名带引号导致无法直接打开 */
+function stripPathQuotes(raw: string | undefined): string {
+	return (raw ?? '').trim().replace(/^["'`“”‘’]+/, '').replace(/["'`‘’“”]+$/, '');
+}
+
 /** 解析模型响应中的全部指令块（按出现顺序编号）；无指令返回空数组 */
 export function parseInstructions(text: string): ILlmInstruction[] {
 	const lines = text.split(/\r?\n/);
@@ -70,7 +75,7 @@ export function parseInstructions(text: string): ILlmInstruction[] {
 	for (let i = 0; i < lines.length; i++) {
 		const heading = HEADING_RE.exec(lines[i]);
 		if (heading) {
-			pending = { kind: heading[1].toLowerCase() as 'write' | 'edit' | 'terminal', path: heading[2] };
+			pending = { kind: heading[1].toLowerCase() as 'write' | 'edit' | 'terminal', path: stripPathQuotes(heading[2]) };
 			continue;
 		}
 		if (!pending) {
@@ -177,6 +182,119 @@ export function extractCodeBlocks(text: string): ILlmCodeBlock[] {
 		}
 	}
 	return blocks;
+}
+
+/** 工作流规划：前置思考与步骤拆解（Trae 式「思考 → 规划 → 执行」中的前两阶段） */
+export interface IWorkflowPlan {
+	thinking: string;
+	steps: string[];
+}
+
+/** 去掉整体包裹的代码围栏（模型常把思考/计划也放进 ``` 里） */
+function stripCodeFence(text: string): string {
+	const trimmed = text.trim();
+	if (!trimmed.startsWith('```')) {
+		return trimmed;
+	}
+	const firstNewline = trimmed.indexOf('\n');
+	if (firstNewline === -1) {
+		return '';
+	}
+	const body = trimmed.slice(firstNewline + 1);
+	return (body.endsWith('```') ? body.slice(0, -3) : body).trim();
+}
+
+/**
+ * 解析规划回合输出：
+ * ### ishell:think 内为分析推理，### ishell:plan 内为步骤清单（- 或 1. 开头）。
+ * 两块都缺失时返回空结果，调用方据此退化为直接执行。
+ */
+export function parseWorkflowPlan(text: string): IWorkflowPlan {
+	const thinkMatch = /###\s*ishell:think\s*([\s\S]*?)(?=###\s*ishell:|$)/i.exec(text);
+	const planMatch = /###\s*ishell:plan\s*([\s\S]*?)(?=###\s*ishell:|$)/i.exec(text);
+	const thinking = stripCodeFence(thinkMatch?.[1] ?? '');
+	const steps = (planMatch?.[1] ?? '')
+		.split(/\r?\n/)
+		.map(line => line.trim())
+		.map(line => line.replace(/^[-*]\s*(\[[^\]]*\]\s*)?/, '').replace(/^\d+[.、)]\s*/, '').trim())
+		.filter(line => line.length > 0)
+		.slice(0, 8);
+	return { thinking, steps };
+}
+
+/** 可直接落盘的代码块（普通 Markdown 围栏，非 ishell 指令） */
+export interface IAutoSaveFile {
+	/** 工作区相对路径 */
+	path: string;
+	language?: string;
+	content: string;
+}
+
+/** 围栏语言 → 文件扩展名 */
+const LANGUAGE_TO_EXT: Record<string, string> = {
+	html: 'html', htm: 'html', css: 'css', scss: 'scss', less: 'less',
+	js: 'js', javascript: 'js', mjs: 'js', cjs: 'js', jsx: 'jsx',
+	ts: 'ts', typescript: 'ts', tsx: 'tsx', py: 'py', python: 'py',
+	json: 'json', md: 'md', markdown: 'md',
+	yml: 'yml', yaml: 'yml', java: 'java', go: 'go', rust: 'rs', rs: 'rs',
+	c: 'c', h: 'h', cpp: 'cpp', 'c++': 'cpp', cs: 'cs', sql: 'sql',
+	xml: 'xml', svg: 'svg', toml: 'toml', ini: 'ini', vue: 'vue', txt: 'txt',
+};
+
+/** 扩展名 → 默认文件名（模型未给出文件名时按语言约定命名） */
+const EXT_TO_DEFAULT_NAME: Record<string, string> = {
+	html: 'index.html', css: 'style.css', scss: 'style.scss', less: 'style.less',
+	js: 'script.js', jsx: 'App.jsx', ts: 'main.ts', tsx: 'App.tsx',
+	py: 'main.py', json: 'data.json', md: 'notes.md',
+	yml: 'config.yml', java: 'Main.java', go: 'main.go', rs: 'main.rs',
+	c: 'main.c', h: 'main.h', cpp: 'main.cpp', cs: 'Program.cs', sql: 'query.sql',
+	xml: 'data.xml', svg: 'icon.svg', toml: 'config.toml', ini: 'config.ini', vue: 'App.vue', txt: 'snippet.txt',
+};
+
+/** 无语言标记时按内容嗅探可落盘的扩展名（只做高置信判断） */
+function sniffExtension(content: string): string | undefined {
+	const head = content.trimStart().slice(0, 200).toLowerCase();
+	if (head.startsWith('<!doctype html') || head.startsWith('<html')) {
+		return 'html';
+	}
+	if (head.startsWith('<?xml') || head.startsWith('<svg')) {
+		return 'xml';
+	}
+	return undefined;
+}
+
+/**
+ * 把回答中的普通代码块规划为自动保存文件：
+ * - 仅保留可识别语言的代码块（示例片段/日志等无法识别的语言跳过）
+ * - 文件名优先取回答正文中提到的文件名（如「保存为 game.html」），否则按语言约定命名
+ * - 同名重复自动追加序号，避免块间互相覆盖
+ */
+export function planAutoSaveFromCodeBlocks(text: string, excludeNames?: ReadonlySet<string>): IAutoSaveFile[] {
+	const used = new Set<string>(excludeNames ?? []);
+	const mentioned = Array.from(text.matchAll(/[\w\u4e00-\u9fff-]+\.(?:html|htm|css|scss|less|js|mjs|ts|jsx|tsx|py|json|md|ya?ml|java|go|rs|c|h|cpp|cs|sql|xml|svg|toml|ini|vue|txt)\b/gi))
+		.map(match => match[0]);
+	const files: IAutoSaveFile[] = [];
+	for (const block of extractCodeBlocks(text)) {
+		if (block.content.trim() === '') {
+			continue;
+		}
+		const ext = LANGUAGE_TO_EXT[block.language] ?? sniffExtension(block.content);
+		if (!ext) {
+			continue;
+		}
+		const hinted = mentioned.find(name => name.toLowerCase().endsWith(`.${ext}`) && !used.has(name));
+		const suggested = hinted ?? EXT_TO_DEFAULT_NAME[ext] ?? `snippet.${ext}`;
+		const dot = suggested.lastIndexOf('.');
+		const stem = dot === -1 ? suggested : suggested.slice(0, dot);
+		const suffix = dot === -1 ? `.${ext}` : suggested.slice(dot);
+		let name = suggested;
+		for (let i = 1; used.has(name) && i < 100; i++) {
+			name = `${stem}-${i}${suffix}`;
+		}
+		used.add(name);
+		files.push({ path: name, language: block.language || ext, content: block.content });
+	}
+	return files;
 }
 
 /** 生成文件名友好的短标签：仅 [a-z0-9-]，超长截断 */

@@ -187,8 +187,10 @@ export class ExtHostLanguageModels implements ExtHostLanguageModelsShape {
 	}
 
 	private getVendorFromModelIdentifier(modelIdentifier: string): string | undefined {
-		const firstSlash = modelIdentifier.indexOf('/');
-		return firstSlash === -1 ? undefined : modelIdentifier.substring(0, firstSlash);
+		// Support both `<vendor>/<group>/<id>` (extension providers) and `<vendor>:<id>` (core providers,
+		// e.g. ishell local models) identifier formats. The earliest separator wins.
+		const firstSeparator = modelIdentifier.search(/[/:]/);
+		return firstSeparator === -1 ? undefined : modelIdentifier.substring(0, firstSeparator);
 	}
 
 	async $provideLanguageModelChatInfo(vendor: string, options: ILanguageModelChatInfoOptions, token: CancellationToken): Promise<ILanguageModelChatMetadataAndIdentifier[]> {
@@ -440,16 +442,39 @@ export class ExtHostLanguageModels implements ExtHostLanguageModelsShape {
 		if (!this._localModels.has(modelId)) {
 			// model gone? is this an error on us? Try to resolve model again
 			const vendor = this.getVendorFromModelIdentifier(modelId);
-			if (!vendor) {
-				this._logService.warn(`[LanguageModelProxy](${extension.identifier.value}) Could not extract vendor from model identifier '${modelId}'.`);
-				return undefined;
+			if (vendor) {
+				this._logService.trace(`[LanguageModelProxy](${extension.identifier.value}) Could not find model '${modelId}' in local cache. Trying to resolve model again.`);
+				// Call proxy directly: routing through `selectLanguageModels` would recurse here for every identifier and blow up when the cache stays empty (provider in another ext host).
+				await this._proxy.$selectChatModels({ vendor, extension: extension.identifier });
 			}
-			this._logService.trace(`[LanguageModelProxy](${extension.identifier.value}) Could not find model '${modelId}' in local cache. Trying to resolve model again.`);
-			// Call proxy directly: routing through `selectLanguageModels` would recurse here for every identifier and blow up when the cache stays empty (provider in another ext host).
-			await this._proxy.$selectChatModels({ vendor, extension: extension.identifier });
 			if (!this._localModels.has(modelId)) {
-				this._logService.warn(`[LanguageModelProxy](${extension.identifier.value}) Could not find model '${modelId}' in local cache after re-resolving models.`);
-				return undefined;
+				// Models registered directly by the workbench (core providers, not via an extension) never appear
+				// in this extension host's provider cache. Fetch their metadata from the main thread and synthesize
+				// a local cache entry so that extension-hosted chat participants can use such models.
+				const metadata = await this._proxy.$getLanguageModelInfo(modelId);
+				if (!metadata) {
+					this._logService.warn(`[LanguageModelProxy](${extension.identifier.value}) Could not find model '${modelId}' in local cache after re-resolving models.`);
+					return undefined;
+				}
+				this._localModels.set(modelId, {
+					group: undefined,
+					metadata,
+					info: {
+						id: metadata.id,
+						name: metadata.name,
+						family: metadata.family,
+						version: metadata.version,
+						maxInputTokens: metadata.maxInputTokens,
+						maxOutputTokens: metadata.maxOutputTokens,
+						maxContextWindowTokens: metadata.maxContextWindowTokens,
+						isUserSelectable: metadata.isUserSelectable,
+						capabilities: {
+							imageInput: metadata.capabilities?.vision,
+							editTools: metadata.capabilities?.editTools,
+							toolCalling: metadata.capabilities?.toolCalling,
+						},
+					},
+				});
 			}
 		}
 

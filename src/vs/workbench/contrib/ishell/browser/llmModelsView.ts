@@ -22,24 +22,15 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { ViewPane } from '../../../browser/parts/views/viewPane.js';
 import { IViewletViewOptions } from '../../../browser/parts/views/viewsViewlet.js';
 import { IViewDescriptorService } from '../../../common/views.js';
-import { ILlmEngineInfo, ILlmModelCatalogEntry, ILlmNetworkModel, IIshellLlmService, LlmEngineState, LlmVendorIcon } from '../common/llm.js';
+import { ILlmModelCatalogEntry, ILlmNetworkFile, ILlmNetworkModel, ILlmSourceConfig, IIshellLlmService, LLM_MODEL_CATEGORIES, LlmVendorIcon, networkModelCatalogId, resolveModelCategories } from '../common/llm.js';
 import { renderBrandIcon, renderModelIcon } from './llmModelsEditor.js';
-import { openLlmModelsEditor } from './llmModelsEditorInput.js';
+import { openLlmModelsEditor, LlmModelsEditorFilter } from './llmModelsEditorInput.js';
 import './llm.css';
-
-const ENGINE_STATE_LABEL: Record<LlmEngineState, string> = {
-	missing: '未安装',
-	downloading: '下载中',
-	ready: '已就绪',
-	starting: '启动中',
-	running: '运行中',
-	stopped: '已停止',
-	crashed: '异常退出',
-};
 
 /**
  * 本地模型侧边栏导航视图（左侧区域）：
- * 引擎状态 + 厂家导航；点击厂家在中间编辑器区域打开模型广场（卡片）；
+ * 模型分类导航（对话、推理、代码、音乐、视频、视觉等）；
+ * 点击分类在中间编辑器区域打开模型广场并只显示该类别的模型；
  * 对话复用 VSCode 内置 Chat（本地模型注册为其语言模型）。
  */
 export class LlmModelsView extends ViewPane {
@@ -51,17 +42,19 @@ export class LlmModelsView extends ViewPane {
 	private readonly listeners = new DisposableStore();
 
 	private catalog: ILlmModelCatalogEntry[] = [];
-	private engine: ILlmEngineInfo = { state: 'missing' };
-	private selectedVendor: 'all' | string = 'all';
+	private source: ILlmSourceConfig | undefined;
+	private selectedCategory: 'all' | string = 'all';
 	private searchQuery = '';
 
-	private statusEl: HTMLElement | undefined;
-	private vendorsEl: HTMLElement | undefined;
-	private searchEl: HTMLInputElement | undefined;
+	private navEl: HTMLElement | undefined;
 
 	// 网络搜索状态：防抖定时器 + 请求序号（过期结果丢弃）
 	private networkSearchTimer: ReturnType<typeof setTimeout> | undefined;
 	private networkSearchSeq = 0;
+	/** 仓库 → 最小量化体积（-1 表示未取到） */
+	private readonly networkSizes = new Map<string, number>();
+	/** 体积查询在途的仓库（避免重复请求） */
+	private readonly networkSizePending = new Set<string>();
 
 	constructor(
 		options: IViewletViewOptions,
@@ -89,109 +82,50 @@ export class LlmModelsView extends ViewPane {
 		this.container.classList.add('ishell-llm-models');
 		parent.appendChild(this.container);
 
-		// 引擎状态行
-		this.statusEl = document.createElement('div');
-		this.statusEl.classList.add('ishell-llm-models-status');
-		this.container.appendChild(this.statusEl);
+		// 模型分类导航
+		this.navEl = document.createElement('div');
+		this.navEl.classList.add('ishell-llm-vendors');
+		this.container.appendChild(this.navEl);
 
-		// 模型搜索框（输入即过滤：结果替换厂家导航，点击跳转对应厂家广场）
-		const searchWrap = document.createElement('div');
-		searchWrap.classList.add('ishell-llm-models-search');
-		this.searchEl = document.createElement('input');
-		this.searchEl.type = 'text';
-		this.searchEl.classList.add('ishell-llm-search');
-		this.searchEl.placeholder = localize('ishell.llm.viewSearchPlaceholder', '搜索模型…');
-		this.searchEl.addEventListener('input', () => {
-			this.searchQuery = this.searchEl?.value ?? '';
-			this.renderVendors();
-		});
-		searchWrap.appendChild(this.searchEl);
-		this.container.appendChild(searchWrap);
-
-		// 厂家导航 / 搜索结果（同一容器切换）
-		this.vendorsEl = document.createElement('div');
-		this.vendorsEl.classList.add('ishell-llm-vendors');
-		this.container.appendChild(this.vendorsEl);
-
-		// 引擎缺失时的快捷入口（主操作在中间模型广场页）
-		const engineEntry = document.createElement('div');
-		engineEntry.classList.add('ishell-llm-models-entry');
-		const entryBtn = document.createElement('button');
-		entryBtn.classList.add('ishell-llm-btn', 'ishell-llm-btn-primary');
-		entryBtn.textContent = localize('ishell.llm.openGallery', '打开模型广场');
-		entryBtn.addEventListener('click', () => this.openGallery(this.selectedVendor));
-		engineEntry.appendChild(entryBtn);
-		this.container.appendChild(engineEntry);
-
-		this.listeners.add(this.llmService.onDidChangeEngine(engine => {
-			this.engine = engine;
-			this.renderStatus();
+		this.listeners.add(this.llmService.onDidChangeModels(() => { void this.refreshAll(); }));
+		// 下载源切换后同步标题并重新搜索（工具栏/命令面板均可触发）
+		this.listeners.add(this.llmService.onDidChangeSource(source => {
+			this.source = source;
+			this.renderNav();
 		}));
 
 		this.refreshAll();
 	}
 
 	private async refreshAll(): Promise<void> {
-		const [catalog, engine] = await Promise.all([
+		const [catalog, source] = await Promise.all([
 			this.llmService.getModelCatalog(),
-			this.llmService.getEngineInfo(),
+			this.llmService.getSource(),
 		]);
 		this.catalog = catalog;
-		this.engine = engine;
-		this.renderStatus();
-		this.renderVendors();
-
-		// 打开侧边栏时自动在中间区域打开（或聚焦已打开的）模型广场
-		this.openGallery(this.selectedVendor);
+		this.source = source;
+		this.renderNav();
 	}
 
 	override getActionsContext(): unknown {
 		return undefined;
 	}
 
-	// ==== 引擎状态行 ====
+	// ==== 模型分类导航 ====
 
-	private renderStatus(): void {
-		const root = this.statusEl;
-		if (!root) {
-			return;
-		}
-		root.innerText = '';
-		const badge = document.createElement('span');
-		badge.classList.add('ishell-llm-badge', `ishell-llm-badge-${this.engine.state}`);
-		badge.textContent = ENGINE_STATE_LABEL[this.engine.state] ?? this.engine.state;
-		root.appendChild(badge);
-		if (this.engine.state === 'running' && this.engine.runningModelName) {
-			const name = document.createElement('span');
-			name.classList.add('ishell-llm-dim');
-			name.textContent = ` ${this.engine.runningModelName}`;
-			root.appendChild(name);
-		} else if (this.engine.version) {
-			const ver = document.createElement('span');
-			ver.classList.add('ishell-llm-dim');
-			ver.textContent = ` ${this.engine.version}`;
-			root.appendChild(ver);
-		}
-	}
-
-	// ==== 厂家导航 ====
-
-	private getVendors(): { id: string; name: string; count: number }[] {
-		const seen = new Map<string, string>();
+	/** 各分类下的模型数量（本地目录为空时全部为 0，仍保留分类入口便于后期下载） */
+	private getCategoryCounts(): Map<string, number> {
+		const counts = new Map<string, number>();
 		for (const entry of this.catalog) {
-			if (!seen.has(entry.vendorId)) {
-				seen.set(entry.vendorId, entry.vendorName);
+			for (const categoryId of resolveModelCategories(entry)) {
+				counts.set(categoryId, (counts.get(categoryId) ?? 0) + 1);
 			}
 		}
-		return [...seen.entries()].map(([id, name]) => ({
-			id,
-			name,
-			count: this.catalog.filter(e => e.vendorId === id).length,
-		}));
+		return counts;
 	}
 
-	private renderVendors(): void {
-		const root = this.vendorsEl;
+	private renderNav(): void {
+		const root = this.navEl;
 		if (!root) {
 			return;
 		}
@@ -210,31 +144,35 @@ export class LlmModelsView extends ViewPane {
 		}
 		this.networkSearchSeq++; // 清空搜索时丢弃在途网络结果
 
+		const header = document.createElement('div');
+		header.classList.add('ishell-llm-search-section');
+		header.textContent = localize('ishell.llm.categorySection', '模型分类');
+		root.appendChild(header);
+
 		const all = document.createElement('div');
 		all.classList.add('ishell-llm-vendor-item');
-		if (this.selectedVendor === 'all') {
+		if (this.selectedCategory === 'all') {
 			all.classList.add('active');
 		}
 		const allIcon = document.createElement('span');
-		allIcon.classList.add('codicon', `codicon-${Codicon.layers.id}`, 'ishell-llm-vendor-item-icon');
+		allIcon.classList.add('codicon', `codicon-${Codicon.layers.id}`, 'ishell-llm-vendor-item-icon', 'ishell-llm-cat-all');
 		all.appendChild(allIcon);
-		all.appendChild(this.vendorLabel(localize('ishell.llm.allVendors', '全部模型'), this.catalog.length));
-		all.addEventListener('click', () => this.selectVendor('all'));
+		all.appendChild(this.navLabel(localize('ishell.llm.allVendors', '全部模型'), this.catalog.length));
+		all.addEventListener('click', () => this.selectCategory('all'));
 		root.appendChild(all);
 
-		for (const vendor of this.getVendors()) {
+		const counts = this.getCategoryCounts();
+		for (const category of LLM_MODEL_CATEGORIES) {
 			const item = document.createElement('div');
 			item.classList.add('ishell-llm-vendor-item');
-			if (this.selectedVendor === vendor.id) {
+			if (this.selectedCategory === category.id) {
 				item.classList.add('active');
 			}
-			// 厂家图标：取该厂家第一个模型的图标（网络图片优先，回退 codicon）
-			const first = this.catalog.find(e => e.vendorId === vendor.id);
-			if (first) {
-				item.appendChild(renderModelIcon(first));
-			}
-			item.appendChild(this.vendorLabel(vendor.name, vendor.count));
-			item.addEventListener('click', () => this.selectVendor(vendor.id));
+			const icon = document.createElement('span');
+			icon.classList.add('codicon', `codicon-${category.codicon}`, 'ishell-llm-vendor-item-icon', `ishell-llm-cat-${category.id}`);
+			item.appendChild(icon);
+			item.appendChild(this.navLabel(category.label, counts.get(category.id) ?? 0));
+			item.addEventListener('click', () => this.selectCategory(category.id));
 			root.appendChild(item);
 		}
 	}
@@ -266,13 +204,14 @@ export class LlmModelsView extends ViewPane {
 			vendor.classList.add('ishell-llm-result-vendor');
 			vendor.textContent = entry.vendorName;
 			item.appendChild(vendor);
-			item.addEventListener('click', () => this.openGallery(entry.vendorId));
+			item.addEventListener('click', () => this.openGallery({ vendorId: entry.vendorId }));
 			root.appendChild(item);
 		}
 
 		const networkHeader = document.createElement('div');
 		networkHeader.classList.add('ishell-llm-search-section');
-		networkHeader.textContent = localize('ishell.llm.searchSectionNetwork', '网络模型（HuggingFace）');
+		networkHeader.setAttribute('data-role', 'network-header');
+		networkHeader.textContent = localize('ishell.llm.searchSectionNetwork', '网络模型（{0}）', this.sourceLabel());
 		root.appendChild(networkHeader);
 
 		// 网络区占位（loading / 结果由异步回调填充）
@@ -296,8 +235,29 @@ export class LlmModelsView extends ViewPane {
 		}, 250);
 	}
 
+	private sourceLabel(): string {
+		switch (this.source?.kind) {
+			case 'modelscope': return '魔搭 ModelScope';
+			case 'custom': return '自定义源';
+			default: return 'HuggingFace';
+		}
+	}
+
+	private async refreshSourceLabel(): Promise<void> {
+		try {
+			this.source = await this.llmService.getSource();
+		} catch {
+			return;
+		}
+		const header = this.container?.querySelector<HTMLElement>('[data-role="network-header"]');
+		if (header) {
+			header.textContent = localize('ishell.llm.searchSectionNetwork', '网络模型（{0}）', this.sourceLabel());
+		}
+	}
+
 	/** 执行网络搜索并填充结果区（过期请求 / UI 已重建则丢弃） */
 	private async runNetworkSearch(query: string): Promise<void> {
+		void this.refreshSourceLabel();
 		const seq = ++this.networkSearchSeq;
 		const section = this.container?.querySelector<HTMLElement>('.ishell-llm-network-section') ?? undefined;
 		if (!section) {
@@ -326,44 +286,127 @@ export class LlmModelsView extends ViewPane {
 			section.appendChild(empty);
 			return;
 		}
-		for (const model of models.slice(0, 20)) {
+		const shown = models.slice(0, 20);
+		for (const model of shown) {
 			const item = document.createElement('div');
 			item.classList.add('ishell-llm-vendor-item', 'ishell-llm-result-item');
-			item.title = model.id;
+			item.setAttribute('data-repo', model.id);
+			item.title = `${model.id} · 下载 ${formatDownloads(model.downloads)} · 赞 ${formatDownloads(model.likes)}`;
 			item.appendChild(renderBrandIcon(networkBrandOf(model), 'sm', Codicon.remote, model.id));
 			const name = document.createElement('span');
 			name.classList.add('ishell-llm-result-name');
 			name.textContent = model.id;
 			item.appendChild(name);
-			const downloads = document.createElement('span');
-			downloads.classList.add('ishell-llm-result-vendor');
-			downloads.textContent = formatDownloads(model.downloads);
-			item.appendChild(downloads);
+			// 体积：异步查询各仓库最小量化体积（未取到前显示省略号）
+			const size = document.createElement('span');
+			size.classList.add('ishell-llm-result-vendor', 'ishell-llm-result-size');
+			const known = this.networkSizes.get(model.id);
+			size.textContent = known === undefined ? '…' : known > 0 ? formatSize(known) : '—';
+			item.appendChild(size);
 			item.addEventListener('click', () => this.showNetworkModelActions(model));
 			section.appendChild(item);
 		}
+		this.ensureNetworkSizes(shown);
 	}
 
-	/** 网络模型操作：打开模型主页 / 复制模型 ID（主页跟随当前下载源：镜像或官方） */
+	/** 查询各仓库最小 GGUF 体积（每个仓库仅请求一次，失败记 -1 不再重试） */
+	private ensureNetworkSizes(models: ILlmNetworkModel[]): void {
+		const missing = models.filter(m => !this.networkSizes.has(m.id) && !this.networkSizePending.has(m.id));
+		if (missing.length === 0) {
+			return;
+		}
+		for (const model of missing) {
+			this.networkSizePending.add(model.id);
+		}
+		void Promise.all(missing.map(async model => {
+			let size = -1;
+			try {
+				const files: ILlmNetworkFile[] = await this.llmService.listNetworkModelFiles(model.id);
+				const known = files.filter(f => f.sizeBytes !== undefined).map(f => f.sizeBytes as number);
+				if (known.length > 0) {
+					size = Math.min(...known);
+				}
+			} catch {
+				// 网络异常：保持未知体积
+			}
+			this.networkSizes.set(model.id, size);
+			this.networkSizePending.delete(model.id);
+		})).then(() => this.updateNetworkSizeLabels());
+	}
+
+	/** 原地刷新列表项的体积文案（不重建列表，避免重复触发网络搜索） */
+	private updateNetworkSizeLabels(): void {
+		const section = this.container?.querySelector<HTMLElement>('.ishell-llm-network-section');
+		if (!section) {
+			return;
+		}
+		for (const item of section.querySelectorAll<HTMLElement>('.ishell-llm-result-item[data-repo]')) {
+			const repo = item.getAttribute('data-repo') ?? '';
+			const size = this.networkSizes.get(repo);
+			if (size === undefined) {
+				continue;
+			}
+			const label = item.querySelector<HTMLElement>('.ishell-llm-result-size');
+			if (label) {
+				label.textContent = size > 0 ? formatSize(size) : '—';
+			}
+		}
+	}
+
+	/**
+	 * 网络模型操作：选量化直接下载（主操作）/ 打开模型主页 / 复制模型 ID。
+	 * 点击即弹出可下载的 GGUF 列表（含体积），避免用户再去主页找文件。
+	 */
 	private async showNetworkModelActions(model: ILlmNetworkModel): Promise<void> {
 		let base = 'https://huggingface.co';
 		try {
 			const source = await this.llmService.getSource();
+			this.source = source;
 			if (source.kind === 'mirror') {
 				base = 'https://hf-mirror.com';
+			} else if (source.kind === 'modelscope') {
+				base = 'https://modelscope.cn/models';
 			}
 		} catch {
 			// 源信息获取失败按官方站
 		}
 		const modelUrl = `${base}/${model.id}`;
-		const pick = await this.quickInput.pick<IQuickPickItem & { act: 'open' | 'copy' }>([
+
+		let files: ILlmNetworkFile[] = [];
+		try {
+			files = await this.llmService.listNetworkModelFiles(model.id);
+		} catch {
+			files = []; // 网络异常：退化为仅打开主页
+		}
+		const downloaded = this.catalog.some(e => e.repo === model.id);
+
+		type NetworkAction = IQuickPickItem & { act: 'download' | 'open' | 'copy'; file?: string };
+		const items: NetworkAction[] = files.map(file => ({
+			label: `$(cloud-download) ${localize('ishell.llm.networkDownloadQuant', '下载 {0}', quantLabelOf(file.file))}`,
+			description: file.sizeBytes !== undefined ? formatSize(file.sizeBytes) : undefined,
+			detail: file.file,
+			act: 'download' as const,
+			file: file.file,
+		}));
+		if (items.length === 0) {
+			items.push({ label: localize('ishell.llm.networkNoDirect', '该仓库无直接可下载的 GGUF 文件'), act: 'open' });
+		}
+		items.push(
 			{ label: localize('ishell.llm.networkOpen', '打开模型主页'), detail: modelUrl, act: 'open' },
 			{ label: localize('ishell.llm.networkCopy', '复制模型 ID'), detail: model.id, act: 'copy' },
-		], { placeHolder: localize('ishell.llm.networkPickHint', '{0}（下载 {1} · 赞 {2}）', model.id, formatDownloads(model.downloads), String(model.likes)) });
+		);
+
+		const pick = await this.quickInput.pick(items, {
+			placeHolder: localize('ishell.llm.networkPickHint', '{0}（下载 {1} · 赞 {2}{3}）',
+				model.id, formatDownloads(model.downloads), formatDownloads(model.likes),
+				downloaded ? localize('ishell.llm.networkHasDownloaded', ' · 已下载') : ''),
+		});
 		if (!pick) {
 			return;
 		}
-		if (pick.act === 'open') {
+		if (pick.act === 'download' && pick.file) {
+			await this.downloadNetworkFile(model, pick.file);
+		} else if (pick.act === 'open') {
 			await this.openerService.open(URI.parse(modelUrl), { openExternal: true });
 		} else {
 			await this.clipboardService.writeText(model.id);
@@ -371,13 +414,39 @@ export class LlmModelsView extends ViewPane {
 		}
 	}
 
-	private selectVendor(vendorId: 'all' | string): void {
-		this.selectedVendor = vendorId;
-		this.renderVendors();
-		this.openGallery(vendorId);
+	/** 下载指定仓库的 GGUF（进度由主进程推送，完成后模型进入本地目录卡片） */
+	private async downloadNetworkFile(model: ILlmNetworkModel, file: string): Promise<void> {
+		const catalogId = networkModelCatalogId(model.id, file);
+		if (this.catalog.some(e => e.id === catalogId)) {
+			this.notificationService.info(localize('ishell.llm.networkAlreadyDownloaded', '该文件已下载：{0}', file));
+			return;
+		}
+		let started: Promise<void>;
+		try {
+			started = this.llmService.downloadNetworkModel(model.id, file);
+		} catch (err) {
+			this.notificationService.error((err as Error).message);
+			return;
+		}
+		this.notificationService.info(localize('ishell.llm.networkDownloadStarted',
+			'已开始下载：{0}\n下载完成后会出现在模型广场卡片中', file));
+		try {
+			await started;
+			this.notificationService.info(localize('ishell.llm.networkDownloadDone', '下载完成：{0}', file));
+			this.catalog = await this.llmService.getModelCatalog();
+			this.renderNav();
+		} catch (err) {
+			this.notificationService.error((err as Error).message);
+		}
 	}
 
-	private vendorLabel(name: string, count: number): HTMLElement {
+	private selectCategory(categoryId: 'all' | string): void {
+		this.selectedCategory = categoryId;
+		this.renderNav();
+		this.openGallery({ categoryId });
+	}
+
+	private navLabel(name: string, count: number): HTMLElement {
 		const wrap = document.createElement('div');
 		wrap.classList.add('ishell-llm-vendor-label');
 		const label = document.createElement('span');
@@ -392,9 +461,9 @@ export class LlmModelsView extends ViewPane {
 
 	// ==== 打开中间模型广场 ====
 
-	private openGallery(vendorId: 'all' | string): void {
+	private openGallery(filter: LlmModelsEditorFilter, newTab = false): void {
 		// 打开失败静默处理，不影响侧边栏
-		openLlmModelsEditor(this.editorService, this.instantiationService, vendorId).catch(() => { });
+		openLlmModelsEditor(this.editorService, this.instantiationService, filter, { newTab }).catch(() => { });
 	}
 
 	override dispose(): void {
@@ -430,4 +499,22 @@ function formatDownloads(count: number): string {
 		return `${(count / 1000).toFixed(1)}k`;
 	}
 	return String(count);
+}
+
+/** 体积显示（GB / MB / KB） */
+function formatSize(bytes: number): string {
+	if (bytes >= 1024 ** 3) {
+		return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+	}
+	if (bytes >= 1024 ** 2) {
+		return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+	}
+	return `${Math.round(bytes / 1024)} KB`;
+}
+
+/** GGUF 文件名 → 量化标签（如 q4_k_m → Q4_K_M） */
+function quantLabelOf(file: string): string {
+	const base = (file.split('/').pop() ?? file).replace(/\.gguf$/i, '');
+	const match = /(i?q\d+[_a-z0-9]*|f16|bf16|f32|fp16)/i.exec(base);
+	return match ? match[1].toUpperCase() : base;
 }

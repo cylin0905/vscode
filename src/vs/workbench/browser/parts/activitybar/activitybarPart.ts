@@ -90,7 +90,7 @@ export class ActivitybarPart extends Part {
 	 */
 	static readonly FLOATING_BORDER = 1;
 
-	static readonly pinnedViewContainersKey = 'workbench.activity.pinnedViewlets2';
+	static readonly pinnedViewContainersKey = 'workbench.activity.pinnedViewlets3';
 	static readonly placeholderViewContainersKey = 'workbench.activity.placeholderViewlets';
 	static readonly viewContainersWorkspaceStateKey = 'workbench.activity.viewletsWorkspaceState';
 

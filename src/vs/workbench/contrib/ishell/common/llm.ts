@@ -18,12 +18,12 @@ export const ISHELL_LLM_IPC_CHANNEL = 'ishellLlm';
 
 // ==== 下载源 ====
 
-export type LlmSourceKind = 'official' | 'mirror' | 'custom';
+export type LlmSourceKind = 'official' | 'mirror' | 'modelscope' | 'custom';
 
 export interface ILlmSourceConfig {
 	id: string;
 	kind: LlmSourceKind;
-	/** 显示名（官方源 / 国内镜像 / 自定义） */
+	/** 显示名（官方源 / 国内镜像 / 魔搭 / 自定义） */
 	name: string;
 	/** 模型下载端点，GGUF 直链 = endpoint/{repo}/resolve/main/{file} */
 	endpoint: string;
@@ -77,17 +77,181 @@ export interface ILlmNetworkModel {
 	tags: string[];
 }
 
+/** 网络搜索分页大小（每页条数；滚动到底继续加载下一页直到取完） */
+export const LLM_NETWORK_PAGE_SIZE = 100;
+
+/** 网络仓库中的可下载 GGUF 文件 */
+export interface ILlmNetworkFile {
+	/** 仓库内路径（如 model-q4_k_m.gguf 或 sub/model.gguf） */
+	file: string;
+	sizeBytes?: number;
+}
+
+/** 网络模型下载键 / 目录 id：由仓库与文件名稳定派生（小写、特殊字符归一） */
+export function networkModelCatalogId(repo: string, file: string): string {
+	const slug = (text: string) => text
+		.toLowerCase()
+		.replace(/\.gguf$/i, '')
+		.replace(/[^a-z0-9._]+/g, '-')
+		.replace(/^[-.]+|[-.]+$/g, '');
+	const id = `${slug(repo)}--${slug(file)}`;
+	return id === '--' ? 'network-model' : id;
+}
+
+// ==== 模型种类 ====
+
+/** 模型种类：对话模型（llama.cpp）或音乐模型（audio.cpp / Yue2） */
+export type LlmModelKind = 'chat' | 'music';
+
+/** 音乐模型仓库/命名特征（兼容历史记录，无需迁移） */
+export function resolveModelKind(input: {
+	repo?: string;
+	file?: string;
+	name?: string;
+	catalogId?: string;
+	kind?: LlmModelKind;
+}): LlmModelKind {
+	if (input.kind) {
+		return input.kind;
+	}
+	const repo = (input.repo ?? '').toLowerCase();
+	if (repo.startsWith('audio-cpp/') || repo.includes('audiocpp')) {
+		return 'music';
+	}
+	const text = `${input.name ?? ''} ${input.file ?? ''} ${input.catalogId ?? ''}`.toLowerCase();
+	if (/yue2|yue-?2|音乐/.test(text)) {
+		return 'music';
+	}
+	return 'chat';
+}
+
+// ==== 模型分类（左侧导航按类别展示 / 模型广场按类别过滤） ====
+
+/** 模型分类元数据：类别尽量全覆盖，便于后期按类别下载与筛选 */
+export interface ILlmModelCategory {
+	/** 分类 id（同时作为目录条目 tags 中的类别标记） */
+	id: string;
+	/** 显示名 */
+	label: string;
+	/** codicon 图标名（不含 codicon- 前缀） */
+	codicon: string;
+	/** 识别关键词（小写；命中名称/描述/仓库/文件名即归入该分类） */
+	keywords: string[];
+	/** 额外匹配规则（小写文本；用于 `vl` 这类需要词边界的短标记） */
+	pattern?: RegExp;
+}
+
+export const LLM_MODEL_CATEGORIES: readonly ILlmModelCategory[] = [
+	{ id: 'chat', label: '对话', codicon: 'comment-discussion', keywords: ['chat', 'instruct', 'assistant', 'completion', '对话', '聊天'] },
+	{ id: 'reasoning', label: '推理', codicon: 'lightbulb', keywords: ['reasoning', 'thinking', 'cot', 'distill', '推理', '思维链'], pattern: /(^|[^a-z0-9])r1([^a-z0-9]|$)/ },
+	{ id: 'code', label: '代码', codicon: 'code', keywords: ['coder', 'code', 'sql', '代码', '编程'] },
+	{ id: 'vision', label: '视觉', codicon: 'eye', keywords: ['vision', 'visual', 'llava', '图像理解', '视觉', '看图'], pattern: /(^|[^a-z0-9])vl([^a-z0-9]|$)/ },
+	{ id: 'video', label: '视频', codicon: 'device-camera-video', keywords: ['video', 'cogvideo', 'hunyuanvideo', 'wan2', 'cosmos', '视频'] },
+	{ id: 'music', label: '音乐', codicon: 'music', keywords: ['music', 'musicgen', 'ace-step', 'yue2', 'yue-2', 'audiocpp', 'audio-cpp', '音乐', '作曲'] },
+	{ id: 'audio', label: '语音', codicon: 'mic', keywords: ['speech', 'tts', 'asr', 'whisper', 'voice', 'vocoder', 'parler', '语音', '朗读', '播报'] },
+	{ id: 'image', label: '图像生成', codicon: 'file-media', keywords: ['diffusion', 'sdxl', 'stable-diffusion', 'flux', 'lumina', '图像生成', '文生图', '绘图'] },
+	{ id: 'embedding', label: '嵌入', codicon: 'symbol-array', keywords: ['embedding', 'embed', 'bge', 'reranker', 'retrieval', '嵌入', '向量', '检索'] },
+	{ id: 'multimodal', label: '多模态', codicon: 'layers', keywords: ['multimodal', 'multi-modal', 'omni', 'vlm', '多模态'] },
+];
+
+/** 解析条目所属分类：显式 tags 优先；仅有通用 'chat' 标签或未打标签时按关键词推断；未识别归入「对话」 */
+export function resolveModelCategories(input: {
+	tags?: readonly string[];
+	name?: string;
+	description?: string;
+	repo?: string;
+	file?: string;
+	id?: string;
+}): string[] {
+	const tags = new Set((input.tags ?? []).map(tag => tag.toLowerCase()));
+	const tagged = LLM_MODEL_CATEGORIES.filter(category => tags.has(category.id));
+	// 存在具体类别标签（代码/推理/音乐等）时以标签为准，避免「代码模型也进对话」的重复归类
+	if (tagged.length > 0 && tagged.some(category => category.id !== 'chat')) {
+		return tagged.map(category => category.id);
+	}
+	const text = `${input.name ?? ''} ${input.description ?? ''} ${input.repo ?? ''} ${input.file ?? ''} ${input.id ?? ''}`.toLowerCase();
+	const result = new Set<string>(tagged.map(category => category.id));
+	for (const category of LLM_MODEL_CATEGORIES) {
+		if (category.keywords.some(keyword => text.includes(keyword))
+			|| (category.pattern !== undefined && category.pattern.test(text))) {
+			result.add(category.id);
+		}
+	}
+	if (result.size === 0) {
+		result.add('chat');
+	}
+	return [...result];
+}
+
 // ==== 已下载模型 ====
 
 export interface ILlmModelRecord {
 	id: string;
-	/** 对应预置目录 id */
+	/** 对应预置目录 id（网络下载模型为 networkModelCatalogId） */
 	catalogId: string;
 	name: string;
 	/** GGUF 绝对路径 */
 	filePath: string;
 	sizeBytes: number;
 	downloadedAt: number;
+	/** 网络模型来源仓库（预置目录模型为空） */
+	repo?: string;
+	/** 网络模型来源文件名（预置目录模型为空） */
+	file?: string;
+	/** 展示用描述（缺省由目录/仓库生成） */
+	description?: string;
+	/** 推荐最低内存（GB，网络模型按体积估算） */
+	minRamGb?: number;
+	/** 下载来源（网络模型记录来源源类型；预置目录模型为空） */
+	source?: LlmSourceKind;
+	/** 该模型的加载参数（覆盖全局配置；缺省字段使用全局默认值） */
+	params?: ILlmModelParams;
+	/** 模型种类（下载时写入；历史记录由 resolveModelKind 兜底） */
+	kind?: LlmModelKind;
+}
+
+/** 模型加载 / 生成参数（每个模型独立配置，保存后生效；缺省字段使用全局默认值） */
+export interface ILlmModelParams {
+	/** 上下文长度（tokens） */
+	contextSize?: number;
+	/** 卸载到 GPU 的层数（0 = 纯 CPU） */
+	gpuLayers?: number;
+	/** CPU 线程数（0 = 引擎自动） */
+	threads?: number;
+	/** 提示词批处理大小 */
+	batchSize?: number;
+	/** 微批处理大小（显存紧张时调小） */
+	ubatchSize?: number;
+	/** Flash Attention：auto / on / off */
+	flashAttention?: 'auto' | 'on' | 'off';
+	/** K 缓存量化类型（f16 / q8_0 / q4_0 等） */
+	cacheTypeK?: string;
+	/** V 缓存量化类型（f16 / q8_0 / q4_0 等） */
+	cacheTypeV?: string;
+	/** OpenAI 兼容 API 端口 */
+	apiPort?: number;
+	/** 采样温度（0 ~ 2） */
+	temperature?: number;
+	/** Top-P 采样（0 ~ 1） */
+	topP?: number;
+	/** Top-K 采样（0 = 不限制） */
+	topK?: number;
+	/** 重复惩罚系数（1.0 = 不惩罚） */
+	repeatPenalty?: number;
+	/** 单次生成的最大 token 数 */
+	maxTokens?: number;
+	/** 随机种子（-1 = 每次随机） */
+	seed?: number;
+	/** 音频推理后端（auto = macOS 用 metal、其他平台 cpu） */
+	audioBackend?: 'auto' | 'metal' | 'cuda' | 'cpu';
+	/** 音乐 VAE 精度（f16 体积小 / f32 精度高） */
+	vaeType?: 'f16' | 'f32';
+	/** 音乐推理步数（缺省 24） */
+	numInferenceSteps?: number;
+	/** 音乐 CoT 模式（缺省 off） */
+	cotMode?: 'off' | 'melody' | 'full';
+	/** 目标时长（秒；0 = 引擎自动） */
+	durationSeconds?: number;
 }
 
 // ==== 下载进度（引擎 / 模型共用） ====
@@ -130,6 +294,8 @@ export interface ILlmEngineInfo {
 export interface ILlmSystemInfo {
 	arch: string;
 	totalMemGb: number;
+	/** 当前可用内存（GB，一位小数）：用于下载前的内存不足提示 */
+	availableMemGb: number;
 	cpuModel: string;
 	cpuCores: number;
 	/** 按内存分档推荐适配的目录 id 列表 */
@@ -140,7 +306,7 @@ export interface ILlmSystemInfo {
 
 export type LlmLogLevel = 'info' | 'warn' | 'error';
 
-export type LlmLogSource = 'system' | 'engine-download' | 'model-download' | 'engine' | 'gateway' | 'chat';
+export type LlmLogSource = 'system' | 'engine-download' | 'model-download' | 'engine' | 'gateway' | 'chat' | 'music';
 
 export interface ILlmLogEntry {
 	seq: number;
@@ -161,16 +327,52 @@ export interface ILlmChatMessage {
 }
 
 /** 流式对话回调（主进程内 Provider 接口；渲染层经 IPC 事件接收增量） */
+export interface ILlmChatOptions {
+	/** 单次生成的最大 token 数（缺省由服务端决定） */
+	maxTokens?: number;
+	/** 采样温度（0 ~ 2；缺省由引擎决定） */
+	temperature?: number;
+	/** Top-P 采样（0 ~ 1；缺省由引擎决定） */
+	topP?: number;
+	/** Top-K 采样（缺省由引擎决定） */
+	topK?: number;
+	/** 重复惩罚系数（缺省由引擎决定） */
+	repeatPenalty?: number;
+	/** 随机种子（-1 = 每次随机） */
+	seed?: number;
+}
+
 export interface ILlmChatProvider {
 	/** Provider 标识（'local'；未来 'openai' / 'anthropic' 等） */
 	readonly id: string;
 	isReady(): Promise<boolean>;
 	/** 流式对话：每收到一段增量文本回调 onChunk，结束时 resolve；signal 中止 */
-	chatStream(messages: ILlmChatMessage[], onChunk: (delta: string) => void, signal: AbortSignal): Promise<void>;
+	chatStream(messages: ILlmChatMessage[], onChunk: (delta: string) => void, signal: AbortSignal, options?: ILlmChatOptions): Promise<void>;
+}
+
+/**
+ * 退化重复检测：小模型常在同一段结构上无限复读（如仅编号递增的 CSS 规则）。
+ * 取输出尾部窗口，按行归一化（去除数字/多余空白）后统计同一行出现次数，超过阈值即判定为重复。
+ */
+export function detectDegenerateRepetition(text: string, threshold = 8, windowChars = 2000): boolean {
+	const tail = text.slice(-windowChars);
+	const counts = new Map<string, number>();
+	for (const raw of tail.split(/\r?\n/)) {
+		const line = raw.trim();
+		if (line.length < 8) {
+			continue; // 极短行（}、空行等）不参与判定，避免误报
+		}
+		const key = line.replace(/\d+/g, '#').replace(/\s+/g, ' ');
+		const count = (counts.get(key) ?? 0) + 1;
+		if (count >= threshold) {
+			return true;
+		}
+		counts.set(key, count);
+	}
+	return false;
 }
 
 export interface ILlmChatChunkEvent {
-	requestId: string;
 	/** 增量文本（done=true 时为空） */
 	delta?: string;
 	done: boolean;
@@ -342,6 +544,59 @@ export function inferLanguageFromPath(path: string): string {
 	}
 }
 
+// ==== 音乐生成（audio.cpp / Yue2） ====
+
+export type LlmMusicState = 'preparing' | 'downloading-engine' | 'downloading-model' | 'generating' | 'completed' | 'failed' | 'canceled';
+
+export interface ILlmMusicRequest {
+	/** 模型记录 id */
+	modelId: string;
+	/** 歌名（用于输出文件名；缺省按时间命名） */
+	title?: string;
+	/** 歌词（多行；Yue2 支持 [verse] / [chorus] 等段落标记，按原文透传） */
+	lyrics: string;
+	/** 风格描述（如 "pop, female vocal, dreamy"） */
+	style: string;
+	/** 覆盖模型参数；缺省读 model.params */
+	cotMode?: 'off' | 'melody' | 'full';
+	steps?: number;
+	seed?: number;
+	threads?: number;
+	audioBackend?: 'auto' | 'metal' | 'cuda' | 'cpu';
+	/** 目标时长（秒；0 = 引擎自动） */
+	durationSeconds?: number;
+}
+
+export interface ILlmMusicProgress {
+	requestId: string;
+	modelId: string;
+	state: LlmMusicState;
+	/** 人类可读阶段说明（准备引擎 / 下载附属文件 3/5 / 推理中…） */
+	message?: string;
+	/** 0~100，未知时 undefined */
+	percent?: number;
+	/** 引擎最新一行日志（音乐日志区展示） */
+	logLine?: string;
+}
+
+export interface ILlmMusicResult {
+	requestId: string;
+	modelId: string;
+	modelName: string;
+	filePath: string;
+	fileName: string;
+	elapsedMs: number;
+}
+
+export type LlmAudioEngineState = 'missing' | 'downloading' | 'ready' | 'failed';
+
+export interface ILlmAudioEngineInfo {
+	state: LlmAudioEngineState;
+	enginePath?: string;
+	version?: string;
+	detail?: string;
+}
+
 // ==== 服务接口 ====
 
 export const IIshellLlmService = createDecorator<IIshellLlmService>('IIshellLlmService');
@@ -356,8 +611,12 @@ export interface IIshellLlmService {
 	getModelCatalog(): Promise<ILlmModelCatalogEntry[]>;
 	/** 机器配置 + 推荐模型 */
 	getSystemInfo(): Promise<ILlmSystemInfo>;
-	/** 网络模型搜索（HuggingFace API，跟随当前下载源：官方/镜像） */
-	searchNetworkModels(query: string): Promise<ILlmNetworkModel[]>;
+	/** 网络模型搜索（跟随当前下载源：官方/镜像/魔搭/自定义；page 从 0 开始分页） */
+	searchNetworkModels(query: string, page?: number): Promise<ILlmNetworkModel[]>;
+	/** 列出网络仓库中可下载的 GGUF 文件（按体积升序，便于挑选量化） */
+	listNetworkModelFiles(repoId: string): Promise<ILlmNetworkFile[]>;
+	/** 下载网络仓库中的指定 GGUF（进度 id = networkModelCatalogId(repoId, file)） */
+	downloadNetworkModel(repoId: string, file: string): Promise<void>;
 
 	// ---- 下载源 ----
 
@@ -386,6 +645,8 @@ export interface IIshellLlmService {
 
 	/** 启动模型（加载到 llama-server，就绪后自动开启 API 网关） */
 	startModel(modelId: string): Promise<void>;
+	/** 保存模型加载参数；若该模型正在运行则自动重新加载使其生效 */
+	updateModelParams(modelId: string, params: ILlmModelParams): Promise<void>;
 	/** 停止模型（关闭网关与引擎进程） */
 	stopModel(): Promise<void>;
 
@@ -395,6 +656,20 @@ export interface IIshellLlmService {
 	sendChat(messages: ILlmChatMessage[], sessionId?: string): Promise<string>;
 	/** 中止指定请求的生成 */
 	cancelChat(requestId: string): Promise<void>;
+
+	// ---- 音乐生成（audio.cpp / Yue2） ----
+
+	/** 音频引擎状态（进入音乐区时探测，不自动下载） */
+	getAudioEngineInfo(): Promise<ILlmAudioEngineInfo>;
+	/** 下载 audio.cpp 引擎（进度经 onDidMusicProgress 推送） */
+	downloadAudioEngine(): Promise<void>;
+	/** 生成音乐；自动准备引擎/附属文件，完成后返回 WAV 路径 */
+	generateMusic(request: ILlmMusicRequest): Promise<ILlmMusicResult>;
+	/** 读取 WAV 为 base64（渲染层拼 data URL 播放） */
+	readMusicAudio(filePath: string): Promise<string>;
+	cancelMusicGeneration(requestId: string): Promise<void>;
+	/** 在系统文件管理器中定位生成结果 */
+	revealMusicFile(filePath: string): Promise<void>;
 
 	// ---- 模型产物持久化 ----
 
@@ -455,8 +730,12 @@ export interface IIshellLlmService {
 	readonly onDidDownloadProgress: Event<ILlmDownloadProgress>;
 	/** 引擎状态变化（含网关端口信息） */
 	readonly onDidChangeEngine: Event<ILlmEngineInfo>;
+	/** 下载源变化（任意入口切换后通知所有已打开界面刷新） */
+	readonly onDidChangeSource: Event<ILlmSourceConfig>;
 	/** 聊天流式增量 */
 	readonly onDidChatChunk: Event<ILlmChatChunkEvent>;
+	/** 音乐生成进度（引擎/附属文件下载 + 推理日志） */
+	readonly onDidMusicProgress: Event<ILlmMusicProgress>;
 	/** 日志追加（实时） */
 	readonly onDidAppendLog: Event<ILlmLogEntry>;
 	/** Skill 列表变化（注册 / 卸载 / 目录热加载） */

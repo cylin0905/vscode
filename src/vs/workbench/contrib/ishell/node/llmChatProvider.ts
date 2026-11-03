@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as http from 'http';
-import { ILlmChatMessage, ILlmChatProvider } from '../common/llm.js';
+import { ILlmChatMessage, ILlmChatOptions, ILlmChatProvider } from '../common/llm.js';
 
 /**
  * 本地聊天 Provider：请求本机 API 网关的 /v1/chat/completions（SSE 流式），
@@ -21,7 +21,7 @@ export class LocalChatProvider implements ILlmChatProvider {
 		return this.getGatewayPort() !== undefined;
 	}
 
-	chatStream(messages: ILlmChatMessage[], onChunk: (delta: string) => void, signal: AbortSignal): Promise<void> {
+	chatStream(messages: ILlmChatMessage[], onChunk: (delta: string) => void, signal: AbortSignal, options?: ILlmChatOptions): Promise<void> {
 		const port = this.getGatewayPort();
 		if (port === undefined) {
 			return Promise.reject(new Error('本地模型未运行，请先在模型管理中启动模型'));
@@ -30,6 +30,12 @@ export class LocalChatProvider implements ILlmChatProvider {
 			model: 'local',
 			messages,
 			stream: true,
+			...(options?.maxTokens ? { max_tokens: options.maxTokens } : {}),
+			...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+			...(options?.topP !== undefined ? { top_p: options.topP } : {}),
+			...(options?.topK !== undefined ? { top_k: options.topK } : {}),
+			...(options?.repeatPenalty !== undefined ? { repeat_penalty: options.repeatPenalty } : {}),
+			...(options?.seed !== undefined ? { seed: options.seed } : {}),
 		});
 		return new Promise<void>((resolve, reject) => {
 			const req = http.request({

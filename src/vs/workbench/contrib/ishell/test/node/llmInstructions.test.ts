@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as assert from 'assert';
-import { parseCompletedInstructions, parseInstructions, extractCodeBlocks, slugify, shortHash, normalizeModelCompletion } from '../../common/llmInstructions.js';
+import { parseCompletedInstructions, parseInstructions, extractCodeBlocks, slugify, shortHash, normalizeModelCompletion, planAutoSaveFromCodeBlocks, parseWorkflowPlan } from '../../common/llmInstructions.js';
 
 suite('iShell/llmInstructions', () => {
 
@@ -24,6 +24,20 @@ suite('iShell/llmInstructions', () => {
 			assert.strictEqual((instructions[0] as { path: string }).path, 'src/app.ts');
 			assert.strictEqual((instructions[0] as { content: string }).content, 'export const a = 1;');
 			assert.strictEqual((instructions[0] as { language?: string }).language, 'typescript');
+		});
+
+		test('路径两端的引号被剥除（避免文件名带引号无法直接打开）', () => {
+			const cases: [string, string][] = [
+				['"game.html"', 'game.html'],
+				['`main.py`', 'main.py'],
+				['“app.ts”', 'app.ts'],
+				["'a.js'", 'a.js'],
+			];
+			for (const [raw, expected] of cases) {
+				const instructions = parseInstructions(`### ishell:write ${raw}\n\`\`\`\nx\n\`\`\``);
+				assert.strictEqual(instructions.length, 1, raw);
+				assert.strictEqual((instructions[0] as { path: string }).path, expected, raw);
+			}
 		});
 
 		test('解析 edit 指令（find/replace 两段）', () => {
@@ -165,6 +179,57 @@ suite('iShell/llmInstructions', () => {
 			assert.strictEqual(blocks[0].content, 'const a = 1;');
 			assert.strictEqual(blocks[1].language, '');
 			assert.strictEqual(blocks[1].content, 'plain');
+		});
+	});
+
+	suite('planAutoSaveFromCodeBlocks', () => {
+
+		test('优先采用正文提到的文件名', () => {
+			const answer = ['把下面的游戏保存为 game.html：', '```html', '<html><body>hi</body></html>', '```'].join('\n');
+			const files = planAutoSaveFromCodeBlocks(answer);
+			assert.strictEqual(files.length, 1);
+			assert.strictEqual(files[0].path, 'game.html');
+			assert.strictEqual(files[0].content, '<html><body>hi</body></html>');
+		});
+
+		test('未提文件名时按语言约定命名', () => {
+			const answer = ['```css', 'body { margin: 0; }', '```'].join('\n');
+			assert.strictEqual(planAutoSaveFromCodeBlocks(answer)[0].path, 'style.css');
+		});
+
+		test('多个同语言代码块追加序号，避免互相覆盖', () => {
+			const answer = ['```js', 'console.log(1);', '```', '```js', 'console.log(2);', '```'].join('\n');
+			const files = planAutoSaveFromCodeBlocks(answer);
+			assert.deepStrictEqual(files.map(f => f.path), ['script.js', 'script-1.js']);
+		});
+
+		test('无语言标记时按内容嗅探 HTML，无法识别的跳过', () => {
+			const answer = ['```', '<!DOCTYPE html>', '```', '```bash', 'ls -la', '```'].join('\n');
+			const files = planAutoSaveFromCodeBlocks(answer, new Set(['index.html']));
+			assert.deepStrictEqual(files.map(f => f.path), ['index-1.html']);
+		});
+	});
+
+	suite('parseWorkflowPlan', () => {
+
+		test('解析思考与计划两块', () => {
+			const raw = ['### ishell:think', '需要给游戏加计分板，改 game.html。', '### ishell:plan', '- 读取现有文件', '- 在顶栏加入分数显示', '- 更新计分逻辑'].join('\n');
+			const plan = parseWorkflowPlan(raw);
+			assert.strictEqual(plan.thinking, '需要给游戏加计分板，改 game.html。');
+			assert.deepStrictEqual(plan.steps, ['读取现有文件', '在顶栏加入分数显示', '更新计分逻辑']);
+		});
+
+		test('思考内容被代码围栏包裹时自动剥离', () => {
+			const raw = ['### ishell:think', '```', '分析需求：修复按钮点击无效。', '```', '### ishell:plan', '1. 检查事件绑定', '2. 修正监听器'].join('\n');
+			const plan = parseWorkflowPlan(raw);
+			assert.strictEqual(plan.thinking, '分析需求：修复按钮点击无效。');
+			assert.deepStrictEqual(plan.steps, ['检查事件绑定', '修正监听器']);
+		});
+
+		test('缺少标记时返回空结果（调用方退化为直接执行）', () => {
+			const plan = parseWorkflowPlan('这是一个普通回答，没有规划结构。');
+			assert.strictEqual(plan.thinking, '');
+			assert.deepStrictEqual(plan.steps, []);
 		});
 	});
 

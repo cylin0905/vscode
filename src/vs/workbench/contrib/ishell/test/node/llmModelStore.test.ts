@@ -5,7 +5,7 @@
 
 import * as assert from 'assert';
 import { IFileIO } from '../../node/connectionStore.js';
-import { LlmModelStore, MIRROR_ENDPOINT, OFFICIAL_ENDPOINT } from '../../node/llmModelStore.js';
+import { LlmModelStore, MODELSCOPE_ENDPOINT, MIRROR_ENDPOINT, OFFICIAL_ENDPOINT } from '../../node/llmModelStore.js';
 import { ILlmModelRecord } from '../../common/llm.js';
 
 class MemoryIO implements IFileIO {
@@ -64,6 +64,24 @@ suite('ishell > LlmModelStore', () => {
 		assert.strictEqual(official.endpoint, OFFICIAL_ENDPOINT);
 		const mirror = await store.setSource('mirror');
 		assert.strictEqual(mirror.endpoint, MIRROR_ENDPOINT);
+	});
+
+	test('setSource modelscope 固定端点且重载后保持', async () => {
+		await store.load();
+		const source = await store.setSource('modelscope');
+		assert.strictEqual(source.kind, 'modelscope');
+		assert.strictEqual(source.endpoint, MODELSCOPE_ENDPOINT);
+		const reloaded = new LlmModelStore(io);
+		await reloaded.load();
+		assert.strictEqual(reloaded.getSource().kind, 'modelscope');
+		assert.strictEqual(reloaded.getSource().endpoint, MODELSCOPE_ENDPOINT);
+	});
+
+	test('加载 sourceKind=modelscope 被接受', async () => {
+		io.content = JSON.stringify({ version: 1, sourceKind: 'modelscope', customEndpoint: '', engineChannel: 'ghproxy', engineVersion: '', models: [] });
+		await store.load();
+		assert.strictEqual(store.getSource().kind, 'modelscope');
+		assert.strictEqual(store.getSource().endpoint, MODELSCOPE_ENDPOINT);
 	});
 
 	test('setSource custom 校验协议前缀并去除尾斜杠', async () => {

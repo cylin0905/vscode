@@ -3,9 +3,13 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { append, $ } from '../../../../base/browser/dom.js';
+import { append, $, getWindow } from '../../../../base/browser/dom.js';
+import { StandardMouseEvent } from '../../../../base/browser/mouseEvent.js';
+import { IAction } from '../../../../base/common/actions.js';
 import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
+import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
+import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { ILlmLogEntry, IIshellLlmService, LlmLogLevel, LlmLogSource } from '../common/llm.js';
 import './llm.css';
@@ -17,6 +21,7 @@ const SOURCE_LABEL: Record<LlmLogSource, string> = {
 	engine: '引擎',
 	gateway: 'API 网关',
 	chat: '对话',
+	music: '音乐',
 };
 
 /** DOM 节点上限（超出移除最旧；全量数据仍可经导出获得） */
@@ -43,6 +48,8 @@ export class LlmLogsPanel extends Disposable {
 	constructor(
 		parent: HTMLElement,
 		@INotificationService private readonly notificationService: INotificationService,
+		@IClipboardService private readonly clipboardService: IClipboardService,
+		@IContextMenuService private readonly contextMenuService: IContextMenuService,
 		@IIshellLlmService private readonly llmService: IIshellLlmService,
 	) {
 		super();
@@ -110,6 +117,35 @@ export class LlmLogsPanel extends Disposable {
 		// ---- 列表 ----
 		this.logList = append(root, $('.ishell-llm-logs-list'));
 
+		// ---- 右键菜单：复制选中日志 / 全选 ----
+		// 右键按下默认会清空选区：已有选中文本时阻止默认行为，保证「选中 → 右键 → 复制」可用
+		this.logList.addEventListener('mousedown', (event: MouseEvent) => {
+			if (event.button === 2 && this.getSelectedLogText().length > 0) {
+				event.preventDefault();
+			}
+		});
+		this.logList.addEventListener('contextmenu', (event: MouseEvent) => {
+			event.preventDefault();
+			const selected = this.getSelectedLogText();
+			this.contextMenuService.showContextMenu({
+				getAnchor: () => new StandardMouseEvent(getWindow(this.logList), event),
+				getActions: (): IAction[] => [
+					{
+						id: 'ishell.llm.logs.copy',
+						label: localize('ishell.llm.logsCopy', '复制'),
+						enabled: selected.length > 0,
+						run: async () => { await this.clipboardService.writeText(selected); },
+					},
+					{
+						id: 'ishell.llm.logs.selectAll',
+						label: localize('ishell.llm.logsSelectAll', '全选'),
+						enabled: this.logList.childElementCount > 0,
+						run: () => this.selectAllLogs(),
+					},
+				],
+			});
+		});
+
 		// ---- 事件 ----
 		this._register(this.listeners);
 		this.listeners.add(this.llmService.onDidAppendLog(entry => {
@@ -175,6 +211,31 @@ export class LlmLogsPanel extends Disposable {
 
 	private updateCount(): void {
 		this.countLabel.textContent = `${this.logList.childElementCount} 条`;
+	}
+
+	/** 当前在日志区域内选中的文本（无选中返回空字符串） */
+	private getSelectedLogText(): string {
+		const win = getWindow(this.logList);
+		const selection = win.getSelection();
+		if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+			return '';
+		}
+		const range = selection.getRangeAt(0);
+		if (!this.logList.contains(range.commonAncestorContainer)) {
+			return '';
+		}
+		return selection.toString();
+	}
+
+	private selectAllLogs(): void {
+		const win = getWindow(this.logList);
+		const range = win.document.createRange();
+		range.selectNodeContents(this.logList);
+		const selection = win.getSelection();
+		if (selection) {
+			selection.removeAllRanges();
+			selection.addRange(range);
+		}
 	}
 
 	override dispose(): void {
